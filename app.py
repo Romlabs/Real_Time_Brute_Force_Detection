@@ -707,4 +707,352 @@ elif page == "🌲 Baseline Models":
                                      "Balanced RF"))
 
         section("Precision-Recall Curve (Balanced)", "📉")
-        proba = st.session_state
+        proba = st.session_state.model_balanced.predict_proba(
+            st.session_state.X_test)[:, 1]
+        st.pyplot(plot_pr_curve(st.session_state.y_test, proba,
+                                title="Precision-Recall — Balanced RF"))
+
+
+# ---------------- GRID SEARCH ----------------
+elif page == "🔧 Grid Search":
+    hero("🔧 Grid Search",
+         "Exhaustive search over a compact hyperparameter grid (cloud-safe).",
+         badge="Step 5a / 8")
+
+    if st.session_state.X_res is None:
+        st.warning("⚠️ Run SMOTE first."); st.stop()
+
+    st.info("⚙️ Reduced grid · `cv=2` · `n_jobs=1` — tuned for the "
+            "Streamlit Cloud container.")
+
+    if st.button("▶️ Run Grid Search"):
+        param_grid = {
+            "n_estimators":      [50, 100],
+            "max_features":      ["sqrt"],
+            "max_depth":         [10, 20],
+            "min_samples_split": [2, 5],
+        }
+        rf = RandomForestClassifier(random_state=42, n_jobs=1)
+        gs = GridSearchCV(rf, param_grid, cv=2, n_jobs=1,
+                          scoring="accuracy", verbose=0)
+        with st.spinner("Running Grid Search..."):
+            gs.fit(st.session_state.X_res, st.session_state.y_res)
+        st.session_state.grid_results = gs
+        st.success("✅ Grid Search complete.")
+
+    gs = st.session_state.grid_results
+    if gs is not None:
+        section("Best Configuration", "🏆")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            kpi("Best CV Accuracy", f"{gs.best_score_*100:.2f}%", "good")
+        with c2:
+            st.markdown("**Best parameters**")
+            st.json(gs.best_params_)
+
+        section("Full Results Table", "📋")
+        res_df = pd.DataFrame(gs.cv_results_)[
+            ["params", "mean_test_score", "std_test_score", "rank_test_score"]
+        ].sort_values("rank_test_score")
+        res_df["mean_test_score"] = (res_df["mean_test_score"] * 100).round(2)
+        res_df["std_test_score"]  = (res_df["std_test_score"] * 100).round(2)
+        st.dataframe(res_df, use_container_width=True)
+
+
+# ---------------- RANDOMIZED (RECALL) ----------------
+elif page == "🎲 Randomized Search (Recall)":
+    hero("🎲 Randomized Search — Optimized for Recall",
+         "Prioritize catching attacks, even at the cost of more false alarms.",
+         badge="Step 5b / 8")
+
+    if st.session_state.X_res is None:
+        st.warning("⚠️ Run SMOTE first."); st.stop()
+
+    n_iter = st.slider("n_iter", 5, 20, 10, 5)
+
+    if st.button("▶️ Run Randomized Search (Recall)"):
+        param_dist = {
+            "max_features":      ["sqrt", "log2", None],
+            "max_depth":         [10, 20, 30, None],
+            "min_samples_split": randint(2, 15),
+            "min_samples_leaf":  randint(1, 8),
+            "bootstrap":         [True, False],
+            "class_weight":      [None, "balanced"],
+        }
+        rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
+        rs = RandomizedSearchCV(
+            rf, param_dist, n_iter=n_iter, cv=2, scoring="recall",
+            n_jobs=1, random_state=42, verbose=0, refit=True,
+        )
+        with st.spinner("Running Randomized Search (Recall)..."):
+            rs.fit(st.session_state.X_res, st.session_state.y_res)
+        st.session_state.rand_recall_results = rs
+        st.session_state.model_best = rs.best_estimator_
+        st.success("✅ Randomized Search (Recall) complete.")
+
+    rs = st.session_state.rand_recall_results
+    if rs is not None:
+        section("Best Configuration", "🏆")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            kpi("Best CV Recall", f"{rs.best_score_*100:.2f}%", "good")
+        with c2:
+            st.json(rs.best_params_)
+
+        section("Test-Set Metrics", "📈")
+        metrics, y_pred, y_proba = evaluate_model(
+            rs.best_estimator_,
+            st.session_state.X_test,
+            st.session_state.y_test)
+        st.session_state.metrics = metrics
+        st.session_state.y_proba_best = y_proba
+        metric_row(metrics)
+
+        section("Confusion Matrix", "🔲")
+        st.pyplot(plot_confusion(st.session_state.y_test, y_pred,
+                                 "Confusion — Recall-optimized RF"))
+
+
+# ---------------- RANDOMIZED (PR-AUC) ----------------
+elif page == "🎯 Randomized Search (PR-AUC)":
+    hero("🎯 Randomized Search — Optimized for PR-AUC",
+         "Maximize area under the Precision-Recall curve — best for imbalance.",
+         badge="Step 5c / 8")
+
+    if st.session_state.X_res is None:
+        st.warning("⚠️ Run SMOTE first."); st.stop()
+
+    n_iter = st.slider("n_iter", 5, 20, 10, 5)
+
+    if st.button("▶️ Run Randomized Search (PR-AUC)"):
+        # Constrained param space: bootstrap=True, no max_features=None
+        param_dist = {
+            "max_features":      ["sqrt", "log2"],
+            "max_depth":         [10, 20, 30, None],
+            "min_samples_split": randint(2, 15),
+            "min_samples_leaf":  randint(1, 8),
+            "bootstrap":         [True],
+            "class_weight":      [None, "balanced"],
+        }
+        rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
+        rs = RandomizedSearchCV(
+            rf, param_dist, n_iter=n_iter, cv=2,
+            scoring="average_precision",
+            n_jobs=1, random_state=42, verbose=0, refit=True,
+        )
+        with st.spinner("Running Randomized Search (PR-AUC)..."):
+            rs.fit(st.session_state.X_res, st.session_state.y_res)
+        st.session_state.rand_prauc_results = rs
+        st.session_state.model_best = rs.best_estimator_
+        st.success("✅ Randomized Search (PR-AUC) complete.")
+
+    rs = st.session_state.rand_prauc_results
+    if rs is not None:
+        section("Best Configuration", "🏆")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            kpi("Best CV PR-AUC", f"{rs.best_score_*100:.2f}%", "good")
+        with c2:
+            st.json(rs.best_params_)
+
+        section("Test-Set Metrics (Default Threshold = 0.5)", "📈")
+        metrics, y_pred, y_proba = evaluate_model(
+            rs.best_estimator_,
+            st.session_state.X_test,
+            st.session_state.y_test)
+        st.session_state.metrics = metrics
+        st.session_state.y_proba_best = y_proba
+        metric_row(metrics)
+
+        section("Confusion Matrix", "🔲")
+        st.pyplot(plot_confusion(st.session_state.y_test, y_pred,
+                                 "Confusion — PR-AUC RF"))
+
+        section("Precision-Recall Curve", "📉")
+        st.pyplot(plot_pr_curve(
+            st.session_state.y_test, y_proba,
+            title="Precision-Recall — PR-AUC-optimized RF"))
+
+
+# ---------------- PRECISION-RECALL & THRESHOLD ----------------
+elif page == "📉 Precision-Recall & Threshold":
+    hero("📉 Precision-Recall & Threshold Tuning",
+         "Dial in your operational trade-off between catching attacks and "
+         "avoiding false alarms.",
+         badge="Step 6 / 8")
+
+    if st.session_state.model_best is None and st.session_state.model_balanced is None:
+        st.warning("⚠️ Train a model first (Baseline or Randomized Search).")
+        st.stop()
+
+    # Use best model if available, else balanced baseline
+    model = st.session_state.model_best or st.session_state.model_balanced
+
+    # Get probabilities
+    proba = model.predict_proba(st.session_state.X_test)[:, 1]
+    st.session_state.y_proba_best = proba
+
+    section("Precision-Recall vs Threshold", "🎚️")
+    threshold = st.slider(
+        "Move the threshold to see the trade-off:",
+        min_value=0.0, max_value=1.0, value=0.23, step=0.01,
+        help="Lower threshold = higher recall (catch more attacks). "
+             "Higher threshold = higher precision (fewer false alarms)."
+    )
+
+    fig = plot_pr_curve(
+        st.session_state.y_test, proba,
+        threshold=threshold,
+        title=f"Precision-Recall Curve (Threshold = {threshold:.2f})")
+    st.pyplot(fig)
+
+    section("Metrics at Selected Threshold", "📊")
+    metrics, y_pred, _ = evaluate_model(
+        model, st.session_state.X_test, st.session_state.y_test,
+        threshold=threshold)
+    metric_row(metrics)
+
+    section("Confusion Matrix", "🔲")
+    st.pyplot(plot_confusion(
+        st.session_state.y_test, y_pred,
+        f"Confusion Matrix — Threshold = {threshold:.2f}"))
+
+    section("Classification Report", "📋")
+    st.dataframe(pd.DataFrame(classification_report(
+        st.session_state.y_test, y_pred, digits=4, output_dict=True
+    )).transpose(), use_container_width=True)
+
+    # Save threshold state
+    st.session_state.custom_threshold = threshold
+
+    st.info(
+        "💡 **Rule of thumb** — for automated account lockouts you may "
+        "want precision ≥ 95% (threshold ~0.40–0.45). For SOC alerting, "
+        "prioritize recall ≥ 80% (threshold ~0.28–0.32)."
+    )
+
+
+# ---------------- FEATURE IMPORTANCE ----------------
+elif page == "📊 Feature Importance":
+    hero("📊 Feature Importance",
+         "Which network features drive the model's attack predictions?",
+         badge="Step 7 / 8")
+
+    model = (st.session_state.model_best
+             or st.session_state.model_balanced
+             or st.session_state.model_baseline)
+
+    if model is None:
+        st.warning("⚠️ Train a model first."); st.stop()
+
+    if not hasattr(model, "feature_importances_"):
+        st.error("Model has no feature_importances_."); st.stop()
+
+    imps = model.feature_importances_
+    names = st.session_state.feature_names or [f"f{i}" for i in range(len(imps))]
+    imp_df = (pd.DataFrame({"Feature": names, "Importance": imps})
+              .sort_values("Importance", ascending=False).reset_index(drop=True))
+
+    top_n = st.slider("Show top N features", 5, min(30, len(imp_df)),
+                      min(15, len(imp_df)))
+
+    section(f"Top {top_n} Feature Importances", "🏅")
+    fig, ax = plt.subplots(figsize=(10, max(4, top_n * 0.38)))
+    palette = sns.color_palette("Blues_r", top_n)
+    sns.barplot(data=imp_df.head(top_n), x="Importance", y="Feature",
+                ax=ax, palette=palette)
+    for i, v in enumerate(imp_df.head(top_n)["Importance"].values):
+        ax.text(v, i, f"  {v:.3f}", va="center", fontsize=9,
+                fontweight="bold", color="#334155")
+    ax.set_xlabel("Relative importance")
+    ax.set_title(f"Top {top_n} Feature Importances", pad=12)
+    st.pyplot(fig)
+
+    with st.expander("📄 Full ranked list"):
+        st.dataframe(imp_df, use_container_width=True)
+
+
+# ---------------- PREDICT ----------------
+elif page == "🔮 Predict":
+    hero("🔮 Predict on New Data",
+         "Score a CSV of network sessions against the trained model.",
+         badge="Step 8 / 8")
+
+    model = (st.session_state.model_best
+             or st.session_state.model_balanced
+             or st.session_state.model_baseline)
+
+    if model is None:
+        st.warning("⚠️ Train a model first."); st.stop()
+
+    threshold = st.session_state.get("custom_threshold", 0.5)
+    st.info(f"🎚️ Using threshold = **{threshold:.2f}** "
+            f"(from the Threshold Tuning page).")
+
+    up = st.file_uploader("Upload feature CSV", type=["csv"])
+    if up is not None:
+        new_df = pd.read_csv(up)
+
+        # Apply same cleaning as training
+        if "session_id" in new_df.columns:
+            new_df = new_df.drop("session_id", axis=1)
+        if "encryption_used" in new_df.columns:
+            new_df["encryption_used"] = new_df["encryption_used"].fillna("None")
+
+        le = LabelEncoder()
+        for c in ["protocol_type", "browser_type", "encryption_used"]:
+            if c in new_df.columns:
+                new_df[c] = le.fit_transform(new_df[c].astype(str))
+
+        expected = st.session_state.feature_names
+        new_enc = pd.get_dummies(new_df).reindex(
+            columns=expected, fill_value=0)
+
+        X_scaled = st.session_state.scaler.transform(new_enc)
+        probas = model.predict_proba(X_scaled)[:, 1]
+        preds = (probas >= threshold).astype(int)
+
+        out = new_df.copy()
+        out["attack_probability"] = probas.round(4)
+        out["prediction"] = preds
+
+        n_attacks = int((preds == 1).sum())
+        n_safe = int((preds == 0).sum())
+
+        section("Prediction Summary", "📊")
+        c1, c2, c3 = st.columns(3)
+        with c1: kpi("Sessions Scored", f"{len(out):,}", "accent")
+        with c2: kpi("Attacks Detected", f"{n_attacks:,}", "danger")
+        with c3: kpi("Benign Sessions", f"{n_safe:,}", "good")
+
+        section("Sample Predictions", "👀")
+        st.dataframe(out.head(50), use_container_width=True)
+
+        section("Prediction Distribution", "📈")
+        fig, ax = plt.subplots(figsize=(6, 4))
+        vc = out["prediction"].value_counts()
+        colors = ["#10b981" if v == 0 else "#ef4444" for v in vc.index]
+        ax.bar(vc.index.astype(str), vc.values, color=colors,
+               edgecolor="white", linewidth=1.5)
+        for i, v in enumerate(vc.values):
+            ax.text(i, v, f"{v:,}", ha="center", va="bottom", fontweight="bold")
+        ax.set_xlabel("Prediction (0 = benign, 1 = attack)")
+        ax.set_ylabel("Count")
+        st.pyplot(fig)
+
+        section("Attack Probability Distribution", "🎯")
+        fig, ax = plt.subplots(figsize=(9, 4))
+        ax.hist(probas, bins=40, color=ACCENT, edgecolor="white", alpha=0.85)
+        ax.axvline(threshold, color="#dc2626", ls="--", lw=2,
+                   label=f"Threshold = {threshold:.2f}")
+        ax.set_xlabel("Predicted attack probability")
+        ax.set_ylabel("Count")
+        ax.legend()
+        st.pyplot(fig)
+
+        st.download_button(
+            "⬇️ Download Predictions",
+            data=out.to_csv(index=False).encode("utf-8"),
+            file_name="predictions.csv",
+            mime="text/csv",
+        )
