@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Real-Time Brute-Force Detection via Predictive Machine Learning
-Streamlit deployment — SMOTE removed; model selector on Threshold page.
+Streamlit deployment — SMOTE removed, model selector, dedent-safe HTML.
 """
 
 import os
 import warnings
+from textwrap import dedent
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -39,9 +40,9 @@ st.set_page_config(
 )
 
 # ==================================================================
-# CUSTOM CSS
+# CUSTOM CSS  (dedent-safe)
 # ==================================================================
-st.markdown("""
+st.markdown(dedent("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
@@ -170,7 +171,7 @@ st.markdown("""
     .stAlert { border-radius: 10px; border-left-width: 4px; }
     hr { border: none; border-top: 1px solid #e2e8f0; margin: 1.5rem 0; }
 </style>
-""", unsafe_allow_html=True)
+""").strip(), unsafe_allow_html=True)
 
 # ==================================================================
 # SESSION STATE
@@ -220,7 +221,7 @@ ACCENT2 = "#f59e0b"
 # SIDEBAR
 # ==================================================================
 with st.sidebar:
-    st.markdown("""
+    st.markdown(dedent("""
     <div style='display:flex; align-items:center; gap:0.6rem; margin-bottom:0.25rem;'>
         <span style='font-size:1.6rem;'>🛡️</span>
         <span style='font-size:1.25rem; font-weight:800; letter-spacing:-0.02em;'>
@@ -230,7 +231,7 @@ with st.sidebar:
     <div style='color:#94a3b8; font-size:0.78rem; margin-bottom:1.5rem;'>
         Random Forest · Threshold Tuning
     </div>
-    """, unsafe_allow_html=True)
+    """).strip(), unsafe_allow_html=True)
 
     st.markdown("##### 🧭 Navigation")
     page = st.radio(
@@ -252,43 +253,47 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("""
+    st.markdown(dedent("""
     <div style='font-size:0.72rem; color:#64748b; line-height:1.6;'>
         <b style='color:#94a3b8;'>⚙️ Environment</b><br>
         Python 3.11 · Streamlit Cloud<br>
         n_jobs=1 · cv=2 (cloud-safe)
     </div>
-    """, unsafe_allow_html=True)
+    """).strip(), unsafe_allow_html=True)
 
 # ==================================================================
-# UI HELPERS
+# UI HELPERS (dedent-safe)
 # ==================================================================
 def hero(title, subtitle, badge=None):
     badge_html = f"<div class='badge'>{badge}</div>" if badge else ""
-    st.markdown(f"""
+    html = dedent(f"""
     <div class="hero">
         {badge_html}
         <h1>{title}</h1>
         <p>{subtitle}</p>
     </div>
-    """, unsafe_allow_html=True)
+    """).strip()
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def section(title, emoji="📌"):
-    st.markdown(
-        f"<div class='section-header'><span class='emoji'>{emoji}</span>{title}</div>",
-        unsafe_allow_html=True,
-    )
+    html = dedent(f"""
+    <div class='section-header'>
+        <span class='emoji'>{emoji}</span>{title}
+    </div>
+    """).strip()
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def kpi(label, value, variant=""):
     cls = f"kpi-value {variant}".strip()
-    st.markdown(f"""
+    html = dedent(f"""
     <div class="kpi-card">
         <div class="kpi-label">{label}</div>
         <div class="{cls}">{value}</div>
     </div>
-    """, unsafe_allow_html=True)
+    """).strip()
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def metric_row(m):
@@ -301,13 +306,14 @@ def metric_row(m):
 
 
 def feature_card(icon, title, body):
-    st.markdown(f"""
+    html = dedent(f"""
     <div class="feature-card">
         <div class="feature-icon">{icon}</div>
         <h4>{title}</h4>
         <p>{body}</p>
     </div>
-    """, unsafe_allow_html=True)
+    """).strip()
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ==================================================================
@@ -330,43 +336,33 @@ def load_from_kaggle():
 
 
 def clean_dataframe(df: pd.DataFrame):
-    """Drop session_id, fill NaNs, label-encode categoricals, dedup."""
     df = df.copy()
-
     if "session_id" in df.columns:
         df = df.drop("session_id", axis=1)
-
     if "encryption_used" in df.columns:
         df["encryption_used"] = df["encryption_used"].fillna("None")
-
     le = LabelEncoder()
     for col in ["protocol_type", "browser_type", "encryption_used"]:
         if col in df.columns:
             df[col] = le.fit_transform(df[col].astype(str))
-
     df = df.drop_duplicates().reset_index(drop=True)
     return df
 
 
 def split_and_scale(df):
-    """Split + one-hot encode + StandardScaler. NO SMOTE."""
     X = df.drop("attack_detected", axis=1)
     y = df["attack_detected"]
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.20, random_state=42, stratify=y
     )
-
     cat_cols = X_train.select_dtypes(include=["object", "category"]).columns
     X_train = pd.get_dummies(X_train, columns=cat_cols, drop_first=True)
     X_test = pd.get_dummies(X_test, columns=cat_cols, drop_first=True)
     X_train, X_test = X_train.align(X_test, join="left", axis=1, fill_value=0)
-
     feature_names = X_train.columns.tolist()
-
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
     X_test_s = scaler.transform(X_test)
-
     return X_train_s, X_test_s, y_train, y_test, feature_names, scaler
 
 
@@ -378,7 +374,6 @@ def evaluate_model(model, X_test, y_test, threshold=None):
         y_pred = model.predict(X_test)
         proba = (model.predict_proba(X_test)[:, 1]
                  if hasattr(model, "predict_proba") else y_pred)
-
     return {
         "Accuracy": accuracy_score(y_test, y_pred) * 100,
         "Precision": precision_score(y_test, y_pred, zero_division=0) * 100,
@@ -435,7 +430,7 @@ if page == "🏠 Overview":
     )
 
     section("Pipeline Overview", "🔬")
-    st.markdown("""
+    st.markdown(dedent("""
     <ol class="step-list">
         <li><b>Load</b> the Cybersecurity Intrusion Detection dataset</li>
         <li><b>Clean</b> — fill NaNs, label-encode, dedup</li>
@@ -445,7 +440,7 @@ if page == "🏠 Overview":
         <li><b>Tune the probability threshold</b> on the Precision-Recall curve</li>
         <li><b>Visualize</b> metrics, confusion matrices, and feature importances</li>
     </ol>
-    """, unsafe_allow_html=True)
+    """).strip(), unsafe_allow_html=True)
 
     section("What Makes This Pipeline Work", "✨")
     c1, c2, c3 = st.columns(3)
@@ -698,18 +693,17 @@ elif page == "🌲 Baseline Models":
         def model_card(title, icon, metrics):
             rows = ""
             for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
-                rows += f"""
-                <div style='display:flex; justify-content:space-between;
-                            padding:0.55rem 0; border-bottom:1px solid #f1f5f9;'>
-                    <span style='color:#64748b; font-size:0.85rem;
-                                 font-weight:500;'>{k}</span>
-                    <span style='color:#0f172a; font-size:0.95rem;
-                                 font-weight:700;
-                                 font-variant-numeric: tabular-nums;'>
-                        {metrics[k]:.2f}%
-                    </span>
-                </div>"""
-            return f"""
+                rows += (
+                    f"<div style='display:flex; justify-content:space-between;"
+                    f" padding:0.55rem 0; border-bottom:1px solid #f1f5f9;'>"
+                    f"<span style='color:#64748b; font-size:0.85rem;"
+                    f" font-weight:500;'>{k}</span>"
+                    f"<span style='color:#0f172a; font-size:0.95rem;"
+                    f" font-weight:700; font-variant-numeric: tabular-nums;'>"
+                    f"{metrics[k]:.2f}%</span>"
+                    f"</div>"
+                )
+            return dedent(f"""
             <div style='background:#ffffff; border:1px solid #e2e8f0;
                         border-radius:14px; padding:1.2rem 1.4rem;
                         box-shadow:0 1px 3px rgba(0,0,0,0.04); height:100%;'>
@@ -722,7 +716,7 @@ elif page == "🌲 Baseline Models":
                 </div>
                 {rows}
             </div>
-            """
+            """).strip()
 
         def diff_card(m1, m2):
             rows = ""
@@ -734,19 +728,18 @@ elif page == "🌲 Baseline Models":
                     color, arrow = "#10b981", "▲"
                 else:
                     color, arrow = "#ef4444", "▼"
-                rows += f"""
-                <div style='display:flex; justify-content:space-between;
-                            align-items:center; padding:0.55rem 0;
-                            border-bottom:1px solid #f1f5f9;'>
-                    <span style='color:#64748b; font-size:0.85rem;
-                                 font-weight:500;'>{k}</span>
-                    <span style='color:{color}; font-size:0.9rem;
-                                 font-weight:700;
-                                 font-variant-numeric: tabular-nums;'>
-                        {arrow} {delta:+.2f}%
-                    </span>
-                </div>"""
-            return f"""
+                rows += (
+                    f"<div style='display:flex; justify-content:space-between;"
+                    f" align-items:center; padding:0.55rem 0;"
+                    f" border-bottom:1px solid #f1f5f9;'>"
+                    f"<span style='color:#64748b; font-size:0.85rem;"
+                    f" font-weight:500;'>{k}</span>"
+                    f"<span style='color:{color}; font-size:0.9rem;"
+                    f" font-weight:700; font-variant-numeric: tabular-nums;'>"
+                    f"{arrow} {delta:+.2f}%</span>"
+                    f"</div>"
+                )
+            return dedent(f"""
             <div style='background:linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
                         border:1px solid #e2e8f0; border-radius:14px;
                         padding:1.2rem 1.4rem; height:100%;'>
@@ -759,7 +752,7 @@ elif page == "🌲 Baseline Models":
                 </div>
                 {rows}
             </div>
-            """
+            """).strip()
 
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -769,7 +762,6 @@ elif page == "🌲 Baseline Models":
         with c3:
             st.markdown(diff_card(m1, m2), unsafe_allow_html=True)
 
-        # Winner summary
         wins = sum(1 for k in m1 if m2[k] > m1[k] + 0.005)
         ties = sum(1 for k in m1 if abs(m2[k] - m1[k]) <= 0.005)
         losses = sum(1 for k in m1 if m1[k] > m2[k] + 0.005)
@@ -781,20 +773,24 @@ elif page == "🌲 Baseline Models":
         section("Confusion Matrices", "🔲")
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(
-                "<div style='text-align:center; color:#64748b; "
-                "font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;'>"
-                "🌲 DEFAULT</div>",
-                unsafe_allow_html=True)
+            st.markdown(dedent("""
+            <div style='text-align:center; color:#64748b;
+                        font-size:0.85rem; font-weight:600;
+                        margin-bottom:0.25rem;'>
+                🌲 DEFAULT
+            </div>
+            """).strip(), unsafe_allow_html=True)
             y_pred = st.session_state.model_baseline.predict(
                 st.session_state.X_test)
             st.pyplot(plot_confusion(st.session_state.y_test, y_pred, ""))
         with c2:
-            st.markdown(
-                "<div style='text-align:center; color:#64748b; "
-                "font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;'>"
-                "⚖️ BALANCED</div>",
-                unsafe_allow_html=True)
+            st.markdown(dedent("""
+            <div style='text-align:center; color:#64748b;
+                        font-size:0.85rem; font-weight:600;
+                        margin-bottom:0.25rem;'>
+                ⚖️ BALANCED
+            </div>
+            """).strip(), unsafe_allow_html=True)
             y_pred = st.session_state.model_balanced.predict(
                 st.session_state.X_test)
             st.pyplot(plot_confusion(st.session_state.y_test, y_pred, ""))
@@ -972,9 +968,7 @@ elif page == "📉 Precision-Recall & Threshold":
          "Compare thresholds across every model you've trained — side by side.",
          badge="Step 6 / 8")
 
-    # ---------- Build the roster of trained models ----------
     available = {}
-
     if st.session_state.model_baseline is not None:
         available["🌲 Default Baseline"] = st.session_state.model_baseline
     if st.session_state.model_balanced is not None:
@@ -994,7 +988,6 @@ elif page == "📉 Precision-Recall & Threshold":
         )
         st.stop()
 
-    # ---------- Model selector ----------
     section("Which model do you want to tune?", "🎛️")
     c1, c2 = st.columns([2, 1])
     with c1:
@@ -1011,14 +1004,12 @@ elif page == "📉 Precision-Recall & Threshold":
     proba = model.predict_proba(st.session_state.X_test)[:, 1]
     st.session_state.y_proba_best = proba
 
-    # ---------- Default-threshold snapshot ----------
     section("Baseline Metrics (Threshold = 0.50)", "📌")
     m_default, y_pred_default, _ = evaluate_model(
         model, st.session_state.X_test, st.session_state.y_test,
         threshold=0.5)
     metric_row(m_default)
 
-    # ---------- Interactive threshold slider ----------
     section("Precision-Recall vs Threshold", "🎚️")
     threshold = st.slider(
         "Move the threshold to see the trade-off:",
@@ -1035,14 +1026,12 @@ elif page == "📉 Precision-Recall & Threshold":
     )
     st.pyplot(fig)
 
-    # ---------- Metrics at chosen threshold ----------
     section(f"Metrics at Threshold = {threshold:.2f}", "📊")
     m_tuned, y_pred_tuned, _ = evaluate_model(
         model, st.session_state.X_test, st.session_state.y_test,
         threshold=threshold)
     metric_row(m_tuned)
 
-    # ---------- Delta vs default ----------
     section("Change vs. Default (0.50)", "📈")
     deltas = {k: m_tuned[k] - m_default[k] for k in m_default}
 
@@ -1053,7 +1042,7 @@ elif page == "📉 Precision-Recall & Threshold":
             color, arrow = "#10b981", "▲"
         else:
             color, arrow = "#ef4444", "▼"
-        st.markdown(f"""
+        html = dedent(f"""
         <div class="kpi-card" style="text-align:left;">
             <div class="kpi-label">{label}</div>
             <div style="color:{color}; font-size:1.6rem; font-weight:700;
@@ -1061,7 +1050,8 @@ elif page == "📉 Precision-Recall & Threshold":
                 {arrow} {value:+.2f}%
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """).strip()
+        st.markdown(html, unsafe_allow_html=True)
 
     d1, d2, d3, d4, d5 = st.columns(5)
     with d1: delta_card("Accuracy",  deltas["Accuracy"])
@@ -1070,7 +1060,6 @@ elif page == "📉 Precision-Recall & Threshold":
     with d4: delta_card("F1 Score",  deltas["F1 Score"])
     with d5: delta_card("PR-AUC",    deltas["PR-AUC"])
 
-    # ---------- Confusion matrix + report ----------
     section("Confusion Matrix", "🔲")
     st.pyplot(plot_confusion(
         st.session_state.y_test, y_pred_tuned,
@@ -1081,11 +1070,9 @@ elif page == "📉 Precision-Recall & Threshold":
         st.session_state.y_test, y_pred_tuned, digits=4, output_dict=True
     )).transpose(), use_container_width=True)
 
-    # ---------- Persist threshold + model choice ----------
     st.session_state.custom_threshold = threshold
     st.session_state.chosen_model_name = chosen_name
 
-    # ---------- All-models comparison table ----------
     section("All Models — Same Threshold", "🧮")
     st.caption(
         f"Comparing every trained model at the same "
@@ -1125,7 +1112,6 @@ elif page == "📊 Feature Importance":
          "Which network features drive the model's attack predictions?",
          badge="Step 7 / 8")
 
-    # Respect the model chosen on the Threshold page if any
     chosen_name = st.session_state.get("chosen_model_name")
     model = None
     if chosen_name == "🌲 Default Baseline":
@@ -1183,7 +1169,6 @@ elif page == "🔮 Predict":
          "Score a CSV of network sessions against the trained model.",
          badge="Step 8 / 8")
 
-    # ---------- Respect the model chosen on the Threshold page ----------
     chosen_name = st.session_state.get("chosen_model_name")
     chosen_model = None
 
