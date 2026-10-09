@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Real-Time Brute-Force Detection via Predictive Machine Learning
-Streamlit deployment — includes PR-curve, threshold tuning, and model comparison.
+Streamlit deployment — SMOTE removed; matches v2 notebook exactly.
 """
 
 import os
@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
 
-from imblearn.over_sampling import SMOTE
 from sklearn.model_selection import (
     train_test_split, GridSearchCV, RandomizedSearchCV
 )
@@ -113,13 +112,6 @@ st.markdown("""
                        line-height: 1.5; }
     .feature-icon { font-size: 1.8rem; display: inline-block; }
 
-    .pill { display: inline-block; padding: 3px 10px; border-radius: 999px;
-            font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em; }
-    .pill-blue  { background:#e0f2fe; color:#0369a1; }
-    .pill-green { background:#dcfce7; color:#166534; }
-    .pill-amber { background:#fef3c7; color:#92400e; }
-    .pill-red   { background:#fee2e2; color:#991b1b; }
-
     .step-list { list-style: none; padding: 0; counter-reset: step; }
     .step-list li {
         counter-increment: step;
@@ -187,7 +179,6 @@ def init_state():
         "df_raw": None, "df_clean": None,
         "X_train": None, "X_test": None,
         "y_train": None, "y_test": None,
-        "X_res": None, "y_res": None,
         "feature_names": None, "scaler": None,
         "model_baseline": None,
         "model_balanced": None,
@@ -198,6 +189,7 @@ def init_state():
         "rand_recall_results": None,
         "rand_prauc_results": None,
         "y_proba_best": None,
+        "custom_threshold": 0.5,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -234,7 +226,7 @@ with st.sidebar:
         </span>
     </div>
     <div style='color:#94a3b8; font-size:0.78rem; margin-bottom:1.5rem;'>
-        Random Forest · SMOTE · Threshold Tuning
+        Random Forest · Threshold Tuning
     </div>
     """, unsafe_allow_html=True)
 
@@ -245,7 +237,7 @@ with st.sidebar:
             "🏠 Overview",
             "📥 Load Data",
             "🧹 Data Cleaning",
-            "⚖️ Class Imbalance (SMOTE)",
+            "✂️ Split & Scale",
             "🌲 Baseline Models",
             "🔧 Grid Search",
             "🎲 Randomized Search (Recall)",
@@ -339,33 +331,29 @@ def clean_dataframe(df: pd.DataFrame):
     """Drop session_id, fill NaNs, label-encode categoricals, dedup."""
     df = df.copy()
 
-    # Drop non-predictive identifier
     if "session_id" in df.columns:
         df = df.drop("session_id", axis=1)
 
-    # Handle missing values BEFORE encoding
     if "encryption_used" in df.columns:
         df["encryption_used"] = df["encryption_used"].fillna("None")
 
-    # Label-encode categorical columns
     le = LabelEncoder()
     for col in ["protocol_type", "browser_type", "encryption_used"]:
         if col in df.columns:
             df[col] = le.fit_transform(df[col].astype(str))
 
-    # Remove duplicates
     df = df.drop_duplicates().reset_index(drop=True)
     return df
 
 
 def split_and_scale(df):
+    """Split + one-hot encode + StandardScaler. NO SMOTE."""
     X = df.drop("attack_detected", axis=1)
     y = df["attack_detected"]
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.20, random_state=42, stratify=y
     )
 
-    # Encode any remaining object columns
     cat_cols = X_train.select_dtypes(include=["object", "category"]).columns
     X_train = pd.get_dummies(X_train, columns=cat_cols, drop_first=True)
     X_test = pd.get_dummies(X_test, columns=cat_cols, drop_first=True)
@@ -381,7 +369,6 @@ def split_and_scale(df):
 
 
 def evaluate_model(model, X_test, y_test, threshold=None):
-    """Evaluate with optional custom probability threshold."""
     if threshold is not None and hasattr(model, "predict_proba"):
         proba = model.predict_proba(X_test)[:, 1]
         y_pred = (proba >= threshold).astype(int)
@@ -441,7 +428,7 @@ if page == "🏠 Overview":
         "🛡️ Real-Time Brute-Force Detection",
         "Predictive machine learning with PR-curve tuning, threshold "
         "optimization, and model comparison.",
-        badge="ML Pipeline · v2.0",
+        badge="ML Pipeline · v3 (no SMOTE)",
     )
 
     section("Pipeline Overview", "🔬")
@@ -449,7 +436,7 @@ if page == "🏠 Overview":
     <ol class="step-list">
         <li><b>Load</b> the Cybersecurity Intrusion Detection dataset</li>
         <li><b>Clean</b> — fill NaNs, label-encode, dedup</li>
-        <li><b>Balance</b> with SMOTE</li>
+        <li><b>Split &amp; Scale</b> — 80/20 stratified split + StandardScaler</li>
         <li><b>Train</b> baseline + class-balanced Random Forests</li>
         <li><b>Tune</b> via Grid Search, then Randomized Search (Recall &amp; PR-AUC)</li>
         <li><b>Tune the probability threshold</b> on the Precision-Recall curve</li>
@@ -457,7 +444,7 @@ if page == "🏠 Overview":
     </ol>
     """, unsafe_allow_html=True)
 
-    section("What Makes v2 Different", "✨")
+    section("What Makes This Pipeline Work", "✨")
     c1, c2, c3 = st.columns(3)
     with c1:
         feature_card("🎯", "PR-AUC Optimization",
@@ -469,8 +456,8 @@ if page == "🏠 Overview":
                      "balance recall vs. false alarms.")
     with c3:
         feature_card("⚖️", "Class Balancing",
-                     "`class_weight='balanced'` + SMOTE to make the model "
-                     "care about the minority (attack) class.")
+                     "`class_weight='balanced'` — the model naturally "
+                     "weights the minority (attack) class more heavily.")
 
     st.info(
         "⚙️ **Cloud-safe:** searches use small grids, `n_jobs=1`, `cv=2` "
@@ -479,10 +466,10 @@ if page == "🏠 Overview":
 
     section("At a Glance", "📊")
     c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi("Model",       "Random Forest",  "accent")
-    with c2: kpi("Imbalance",   "SMOTE + balanced", "good")
-    with c3: kpi("Tuning",      "Grid + Rand.",   "accent")
-    with c4: kpi("Key Metric",  "PR-AUC",         "warn")
+    with c1: kpi("Model",       "Random Forest",   "accent")
+    with c2: kpi("Imbalance",   "class_weight",    "good")
+    with c3: kpi("Tuning",      "Grid + Rand.",    "accent")
+    with c4: kpi("Key Metric",  "PR-AUC",          "warn")
 
 
 # ---------------- LOAD DATA ----------------
@@ -570,6 +557,13 @@ elif page == "🧹 Data Cleaning":
                     ax.text(i, v, f"{v:,}", ha="center", va="bottom",
                             fontweight="bold")
                 st.pyplot(fig)
+
+                # Show class imbalance ratio
+                pct = df["attack_detected"].value_counts(normalize=True) * 100
+                st.caption(
+                    f"**Class 0:** {pct.get(0, 0):.1f}% · "
+                    f"**Class 1:** {pct.get(1, 0):.1f}%"
+                )
             with col2:
                 section("Correlation Matrix", "🔥")
                 num = df.select_dtypes(include=[np.number])
@@ -581,6 +575,23 @@ elif page == "🧹 Data Cleaning":
 
         if "session_duration" in df.columns:
             section("Outlier Check — session_duration", "📦")
+
+            Q1 = df["session_duration"].quantile(0.25)
+            Q3 = df["session_duration"].quantile(0.75)
+            IQR = Q3 - Q1
+            lower = Q1 - 1.5 * IQR
+            upper = Q3 + 1.5 * IQR
+
+            n_out = int(((df["session_duration"] < lower) |
+                         (df["session_duration"] > upper)).sum())
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            with c1: kpi("Q1", f"{Q1:.2f}", "accent")
+            with c2: kpi("Q3", f"{Q3:.2f}", "accent")
+            with c3: kpi("IQR", f"{IQR:.2f}", "accent")
+            with c4: kpi("Bounds", f"{lower:.0f} / {upper:.0f}", "warn")
+            with c5: kpi("Outliers", f"{n_out:,}", "danger")
+
             fig, ax = plt.subplots(figsize=(10, 2.5))
             ax.boxplot(df["session_duration"].dropna(), vert=False,
                        patch_artist=True,
@@ -590,49 +601,53 @@ elif page == "🧹 Data Cleaning":
             st.pyplot(fig)
 
 
-# ---------------- SMOTE ----------------
-elif page == "⚖️ Class Imbalance (SMOTE)":
-    hero("⚖️ Class Imbalance & SMOTE",
-         "Balance attack vs. benign classes with synthetic minority oversampling.",
+# ---------------- SPLIT & SCALE ----------------
+elif page == "✂️ Split & Scale":
+    hero("✂️ Split & Scale",
+         "80/20 stratified train-test split + StandardScaler. "
+         "No resampling applied.",
          badge="Step 3 / 8")
 
     if st.session_state.df_clean is None:
         st.warning("⚠️ Run cleaning first."); st.stop()
 
-    if st.button("▶️ Split & Apply SMOTE"):
-        with st.spinner("Splitting + SMOTE..."):
+    if st.button("▶️ Run Split & Scale"):
+        with st.spinner("Splitting and scaling..."):
             (X_train, X_test, y_train, y_test,
              names, scaler) = split_and_scale(st.session_state.df_clean)
-            smote = SMOTE(random_state=42)
-            X_res, y_res = smote.fit_resample(X_train, y_train)
             st.session_state.X_train = X_train
             st.session_state.X_test = X_test
             st.session_state.y_train = y_train
             st.session_state.y_test = y_test
-            st.session_state.X_res = X_res
-            st.session_state.y_res = y_res
             st.session_state.feature_names = names
             st.session_state.scaler = scaler
-        st.success("✅ SMOTE applied.")
+        st.success("✅ Split & scale complete (no SMOTE).")
 
-    if st.session_state.y_res is not None:
-        section("Balancing Effect", "📊")
+    if st.session_state.y_train is not None:
+        section("Split Overview", "🧮")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: kpi("Train rows", f"{len(st.session_state.y_train):,}", "accent")
+        with c2: kpi("Test rows",  f"{len(st.session_state.y_test):,}",  "accent")
+        with c3: kpi("Features",   f"{len(st.session_state.feature_names)}", "accent")
+        with c4: kpi("Test ratio", "20%", "warn")
+
+        section("Class Distribution (Train vs Test)", "📊")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Before SMOTE**")
+            st.markdown("**Train**")
             fig, ax = plt.subplots(figsize=(6, 4))
             vc = st.session_state.y_train.value_counts()
             ax.bar(vc.index.astype(str), vc.values,
-                   color=["#94a3b8", "#cbd5e1"], edgecolor="white", linewidth=1.5)
+                   color=[ACCENT, ACCENT2], edgecolor="white", linewidth=1.5)
             for i, v in enumerate(vc.values):
                 ax.text(i, v, f"{v:,}", ha="center", va="bottom",
                         fontweight="bold")
             ax.set_xlabel("attack_detected"); ax.set_ylabel("Count")
             st.pyplot(fig)
         with col2:
-            st.markdown("**After SMOTE**")
+            st.markdown("**Test**")
             fig, ax = plt.subplots(figsize=(6, 4))
-            vc = st.session_state.y_res.value_counts()
+            vc = st.session_state.y_test.value_counts()
             ax.bar(vc.index.astype(str), vc.values,
                    color=[ACCENT, ACCENT2], edgecolor="white", linewidth=1.5)
             for i, v in enumerate(vc.values):
@@ -641,16 +656,10 @@ elif page == "⚖️ Class Imbalance (SMOTE)":
             ax.set_xlabel("attack_detected"); ax.set_ylabel("Count")
             st.pyplot(fig)
 
-        section("Split Overview", "🧮")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: kpi("Train rows (pre-SMOTE)",
-                     f"{len(st.session_state.y_train):,}", "accent")
-        with c2: kpi("Train rows (post-SMOTE)",
-                     f"{len(st.session_state.y_res):,}", "good")
-        with c3: kpi("Test rows",
-                     f"{len(st.session_state.y_test):,}", "accent")
-        with c4: kpi("Features",
-                     f"{len(st.session_state.feature_names)}", "warn")
+        st.info(
+            "💡 **Imbalance is preserved** — that's why we use "
+            "`class_weight='balanced'` and threshold tuning instead of SMOTE."
+        )
 
 
 # ---------------- BASELINE MODELS ----------------
@@ -659,19 +668,17 @@ elif page == "🌲 Baseline Models":
          "Train two baseline Random Forests: default vs. class_weight='balanced'.",
          badge="Step 4 / 8")
 
-    if st.session_state.X_res is None:
-        st.warning("⚠️ Run SMOTE first."); st.stop()
+    if st.session_state.X_train is None:
+        st.warning("⚠️ Run Split & Scale first."); st.stop()
 
     if st.button("▶️ Train Both Baselines"):
         with st.spinner("Training baselines..."):
-            rf_default = RandomForestClassifier(
-                random_state=42, n_jobs=1
-            )
+            rf_default = RandomForestClassifier(random_state=42, n_jobs=1)
             rf_balanced = RandomForestClassifier(
                 random_state=42, n_jobs=1, class_weight="balanced"
             )
-            rf_default.fit(st.session_state.X_res, st.session_state.y_res)
-            rf_balanced.fit(st.session_state.X_res, st.session_state.y_res)
+            rf_default.fit(st.session_state.X_train, st.session_state.y_train)
+            rf_balanced.fit(st.session_state.X_train, st.session_state.y_train)
             st.session_state.model_baseline = rf_default
             st.session_state.model_balanced = rf_balanced
 
@@ -719,8 +726,8 @@ elif page == "🔧 Grid Search":
          "Exhaustive search over a compact hyperparameter grid (cloud-safe).",
          badge="Step 5a / 8")
 
-    if st.session_state.X_res is None:
-        st.warning("⚠️ Run SMOTE first."); st.stop()
+    if st.session_state.X_train is None:
+        st.warning("⚠️ Run Split & Scale first."); st.stop()
 
     st.info("⚙️ Reduced grid · `cv=2` · `n_jobs=1` — tuned for the "
             "Streamlit Cloud container.")
@@ -736,7 +743,7 @@ elif page == "🔧 Grid Search":
         gs = GridSearchCV(rf, param_grid, cv=2, n_jobs=1,
                           scoring="accuracy", verbose=0)
         with st.spinner("Running Grid Search..."):
-            gs.fit(st.session_state.X_res, st.session_state.y_res)
+            gs.fit(st.session_state.X_train, st.session_state.y_train)
         st.session_state.grid_results = gs
         st.success("✅ Grid Search complete.")
 
@@ -765,8 +772,8 @@ elif page == "🎲 Randomized Search (Recall)":
          "Prioritize catching attacks, even at the cost of more false alarms.",
          badge="Step 5b / 8")
 
-    if st.session_state.X_res is None:
-        st.warning("⚠️ Run SMOTE first."); st.stop()
+    if st.session_state.X_train is None:
+        st.warning("⚠️ Run Split & Scale first."); st.stop()
 
     n_iter = st.slider("n_iter", 5, 20, 10, 5)
 
@@ -785,7 +792,7 @@ elif page == "🎲 Randomized Search (Recall)":
             n_jobs=1, random_state=42, verbose=0, refit=True,
         )
         with st.spinner("Running Randomized Search (Recall)..."):
-            rs.fit(st.session_state.X_res, st.session_state.y_res)
+            rs.fit(st.session_state.X_train, st.session_state.y_train)
         st.session_state.rand_recall_results = rs
         st.session_state.model_best = rs.best_estimator_
         st.success("✅ Randomized Search (Recall) complete.")
@@ -819,13 +826,12 @@ elif page == "🎯 Randomized Search (PR-AUC)":
          "Maximize area under the Precision-Recall curve — best for imbalance.",
          badge="Step 5c / 8")
 
-    if st.session_state.X_res is None:
-        st.warning("⚠️ Run SMOTE first."); st.stop()
+    if st.session_state.X_train is None:
+        st.warning("⚠️ Run Split & Scale first."); st.stop()
 
     n_iter = st.slider("n_iter", 5, 20, 10, 5)
 
     if st.button("▶️ Run Randomized Search (PR-AUC)"):
-        # Constrained param space: bootstrap=True, no max_features=None
         param_dist = {
             "max_features":      ["sqrt", "log2"],
             "max_depth":         [10, 20, 30, None],
@@ -841,7 +847,7 @@ elif page == "🎯 Randomized Search (PR-AUC)":
             n_jobs=1, random_state=42, verbose=0, refit=True,
         )
         with st.spinner("Running Randomized Search (PR-AUC)..."):
-            rs.fit(st.session_state.X_res, st.session_state.y_res)
+            rs.fit(st.session_state.X_train, st.session_state.y_train)
         st.session_state.rand_prauc_results = rs
         st.session_state.model_best = rs.best_estimator_
         st.success("✅ Randomized Search (PR-AUC) complete.")
@@ -885,10 +891,7 @@ elif page == "📉 Precision-Recall & Threshold":
         st.warning("⚠️ Train a model first (Baseline or Randomized Search).")
         st.stop()
 
-    # Use best model if available, else balanced baseline
     model = st.session_state.model_best or st.session_state.model_balanced
-
-    # Get probabilities
     proba = model.predict_proba(st.session_state.X_test)[:, 1]
     st.session_state.y_proba_best = proba
 
@@ -922,7 +925,6 @@ elif page == "📉 Precision-Recall & Threshold":
         st.session_state.y_test, y_pred, digits=4, output_dict=True
     )).transpose(), use_container_width=True)
 
-    # Save threshold state
     st.session_state.custom_threshold = threshold
 
     st.info(
@@ -993,7 +995,6 @@ elif page == "🔮 Predict":
     if up is not None:
         new_df = pd.read_csv(up)
 
-        # Apply same cleaning as training
         if "session_id" in new_df.columns:
             new_df = new_df.drop("session_id", axis=1)
         if "encryption_used" in new_df.columns:
