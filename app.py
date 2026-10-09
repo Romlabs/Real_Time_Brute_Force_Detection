@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Real-Time Brute-Force Detection via Predictive Machine Learning
-Streamlit deployment — SMOTE removed; matches v2 notebook exactly.
+Streamlit deployment — SMOTE removed; model selector on Threshold page.
 """
 
 import os
@@ -87,7 +87,8 @@ st.markdown("""
                  letter-spacing: 0.06em; text-transform: uppercase;
                  margin-bottom: 0.35rem; }
     .kpi-value { color: #0f172a; font-size: 1.8rem; font-weight: 700;
-                 line-height: 1.1; letter-spacing: -0.02em; }
+                 line-height: 1.1; letter-spacing: -0.02em;
+                 font-variant-numeric: tabular-nums; }
     .kpi-value.accent { color: #0ea5e9; }
     .kpi-value.good   { color: #10b981; }
     .kpi-value.warn   { color: #f59e0b; }
@@ -190,6 +191,7 @@ def init_state():
         "rand_prauc_results": None,
         "y_proba_best": None,
         "custom_threshold": 0.5,
+        "chosen_model_name": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -396,7 +398,8 @@ def plot_confusion(y_test, y_pred, title):
                 annot_kws={"fontsize": 14, "fontweight": "bold"})
     ax.set_xlabel("Predicted", fontweight="bold")
     ax.set_ylabel("True", fontweight="bold")
-    ax.set_title(title, pad=12)
+    if title:
+        ax.set_title(title, pad=12)
     plt.tight_layout()
     return fig
 
@@ -408,7 +411,7 @@ def plot_pr_curve(y_test, y_proba, threshold=None, title="Precision-Recall Curve
     ax.plot(thresholds, recalls[:-1], color=ACCENT2, lw=2.2, label="Recall")
     if threshold is not None:
         ax.axvline(threshold, color="#dc2626", ls="--", lw=1.5,
-                   label=f"Threshold = {threshold}")
+                   label=f"Threshold = {threshold:.2f}")
     ax.set_xlabel("Threshold", fontweight="bold")
     ax.set_ylabel("Score", fontweight="bold")
     ax.set_title(title, pad=12)
@@ -428,7 +431,7 @@ if page == "🏠 Overview":
         "🛡️ Real-Time Brute-Force Detection",
         "Predictive machine learning with PR-curve tuning, threshold "
         "optimization, and model comparison.",
-        badge="ML Pipeline · v3 (no SMOTE)",
+        badge="ML Pipeline · v3",
     )
 
     section("Pipeline Overview", "🔬")
@@ -557,8 +560,6 @@ elif page == "🧹 Data Cleaning":
                     ax.text(i, v, f"{v:,}", ha="center", va="bottom",
                             fontweight="bold")
                 st.pyplot(fig)
-
-                # Show class imbalance ratio
                 pct = df["attack_detected"].value_counts(normalize=True) * 100
                 st.caption(
                     f"**Class 0:** {pct.get(0, 0):.1f}% · "
@@ -685,108 +686,118 @@ elif page == "🌲 Baseline Models":
         st.success("✅ Both baseline models trained.")
 
     if st.session_state.model_balanced is not None:
-        # ---- Side-by-side comparison (clean) ----
-section("Side-by-Side Comparison", "⚖️")
+        section("Side-by-Side Comparison", "⚖️")
 
-m1, _, _ = evaluate_model(
-    st.session_state.model_baseline,
-    st.session_state.X_test, st.session_state.y_test)
-m2, _, _ = evaluate_model(
-    st.session_state.model_balanced,
-    st.session_state.X_test, st.session_state.y_test)
+        m1, _, _ = evaluate_model(
+            st.session_state.model_baseline,
+            st.session_state.X_test, st.session_state.y_test)
+        m2, _, _ = evaluate_model(
+            st.session_state.model_balanced,
+            st.session_state.X_test, st.session_state.y_test)
 
-def model_card(title, icon, metrics, accent="accent"):
-    rows = ""
-    for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
-        rows += f"""
-        <div style='display:flex; justify-content:space-between;
-                    padding:0.55rem 0; border-bottom:1px solid #f1f5f9;'>
-            <span style='color:#64748b; font-size:0.85rem; font-weight:500;'>
-                {k}
-            </span>
-            <span style='color:#0f172a; font-size:0.95rem; font-weight:700;
-                         font-variant-numeric: tabular-nums;'>
-                {metrics[k]:.2f}%
-            </span>
-        </div>"""
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0;
-                border-radius:14px; padding:1.2rem 1.4rem;
-                box-shadow:0 1px 3px rgba(0,0,0,0.04); height:100%;'>
-        <div style='display:flex; align-items:center; gap:0.5rem;
-                    margin-bottom:0.75rem; padding-bottom:0.75rem;
-                    border-bottom:2px solid #e2e8f0;'>
-            <span style='font-size:1.3rem;'>{icon}</span>
-            <span style='font-size:1.05rem; font-weight:700; color:#0f172a;'>
-                {title}
-            </span>
-        </div>
-        {rows}
-    </div>
-    """
+        def model_card(title, icon, metrics):
+            rows = ""
+            for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
+                rows += f"""
+                <div style='display:flex; justify-content:space-between;
+                            padding:0.55rem 0; border-bottom:1px solid #f1f5f9;'>
+                    <span style='color:#64748b; font-size:0.85rem;
+                                 font-weight:500;'>{k}</span>
+                    <span style='color:#0f172a; font-size:0.95rem;
+                                 font-weight:700;
+                                 font-variant-numeric: tabular-nums;'>
+                        {metrics[k]:.2f}%
+                    </span>
+                </div>"""
+            return f"""
+            <div style='background:#ffffff; border:1px solid #e2e8f0;
+                        border-radius:14px; padding:1.2rem 1.4rem;
+                        box-shadow:0 1px 3px rgba(0,0,0,0.04); height:100%;'>
+                <div style='display:flex; align-items:center; gap:0.5rem;
+                            margin-bottom:0.75rem; padding-bottom:0.75rem;
+                            border-bottom:2px solid #e2e8f0;'>
+                    <span style='font-size:1.3rem;'>{icon}</span>
+                    <span style='font-size:1.05rem; font-weight:700;
+                                 color:#0f172a;'>{title}</span>
+                </div>
+                {rows}
+            </div>
+            """
 
-def diff_card(m1, m2):
-    rows = ""
-    for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
-        delta = m2[k] - m1[k]
-        if abs(delta) < 0.005:
-            color, arrow, label = "#64748b", "→", "Tie"
-        elif delta > 0:
-            color, arrow, label = "#10b981", "▲", "Balanced"
-        else:
-            color, arrow, label = "#ef4444", "▼", "Default"
-        rows += f"""
-        <div style='display:flex; justify-content:space-between;
-                    align-items:center; padding:0.55rem 0;
-                    border-bottom:1px solid #f1f5f9;'>
-            <span style='color:#64748b; font-size:0.85rem; font-weight:500;'>
-                {k}
-            </span>
-            <span style='display:flex; align-items:center; gap:0.4rem;'>
-                <span style='color:{color}; font-size:0.9rem;
-                             font-weight:700;
-                             font-variant-numeric: tabular-nums;'>
-                    {delta:+.2f}%
-                </span>
-                <span style='color:{color}; font-size:0.7rem;'>{arrow}</span>
-            </span>
-        </div>"""
-    return f"""
-    <div style='background:linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
-                border:1px solid #e2e8f0; border-radius:14px;
-                padding:1.2rem 1.4rem; height:100%;'>
-        <div style='display:flex; align-items:center; gap:0.5rem;
-                    margin-bottom:0.75rem; padding-bottom:0.75rem;
-                    border-bottom:2px solid #e2e8f0;'>
-            <span style='font-size:1.3rem;'>📊</span>
-            <span style='font-size:1.05rem; font-weight:700; color:#0f172a;'>
-                Difference
-            </span>
-        </div>
-        {rows}
-    </div>
-    """
+        def diff_card(m1, m2):
+            rows = ""
+            for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
+                delta = m2[k] - m1[k]
+                if abs(delta) < 0.005:
+                    color, arrow = "#64748b", "→"
+                elif delta > 0:
+                    color, arrow = "#10b981", "▲"
+                else:
+                    color, arrow = "#ef4444", "▼"
+                rows += f"""
+                <div style='display:flex; justify-content:space-between;
+                            align-items:center; padding:0.55rem 0;
+                            border-bottom:1px solid #f1f5f9;'>
+                    <span style='color:#64748b; font-size:0.85rem;
+                                 font-weight:500;'>{k}</span>
+                    <span style='color:{color}; font-size:0.9rem;
+                                 font-weight:700;
+                                 font-variant-numeric: tabular-nums;'>
+                        {arrow} {delta:+.2f}%
+                    </span>
+                </div>"""
+            return f"""
+            <div style='background:linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
+                        border:1px solid #e2e8f0; border-radius:14px;
+                        padding:1.2rem 1.4rem; height:100%;'>
+                <div style='display:flex; align-items:center; gap:0.5rem;
+                            margin-bottom:0.75rem; padding-bottom:0.75rem;
+                            border-bottom:2px solid #e2e8f0;'>
+                    <span style='font-size:1.3rem;'>📊</span>
+                    <span style='font-size:1.05rem; font-weight:700;
+                                 color:#0f172a;'>Difference</span>
+                </div>
+                {rows}
+            </div>
+            """
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown(model_card("Default", "🌲", m1), unsafe_allow_html=True)
-with c2:
-    st.markdown(model_card("Balanced", "⚖️", m2), unsafe_allow_html=True)
-with c3:
-    st.markdown(diff_card(m1, m2), unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(model_card("Default", "🌲", m1), unsafe_allow_html=True)
+        with c2:
+            st.markdown(model_card("Balanced", "⚖️", m2), unsafe_allow_html=True)
+        with c3:
+            st.markdown(diff_card(m1, m2), unsafe_allow_html=True)
+
+        # Winner summary
+        wins = sum(1 for k in m1 if m2[k] > m1[k] + 0.005)
+        ties = sum(1 for k in m1 if abs(m2[k] - m1[k]) <= 0.005)
+        losses = sum(1 for k in m1 if m1[k] > m2[k] + 0.005)
+        st.caption(
+            f"🏆 **Balanced** wins on **{wins}/5** metrics · "
+            f"**{ties}** tie · **Default** wins on **{losses}/5**"
+        )
 
         section("Confusion Matrices", "🔲")
         c1, c2 = st.columns(2)
         with c1:
+            st.markdown(
+                "<div style='text-align:center; color:#64748b; "
+                "font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;'>"
+                "🌲 DEFAULT</div>",
+                unsafe_allow_html=True)
             y_pred = st.session_state.model_baseline.predict(
                 st.session_state.X_test)
-            st.pyplot(plot_confusion(st.session_state.y_test, y_pred,
-                                     "Default RF"))
+            st.pyplot(plot_confusion(st.session_state.y_test, y_pred, ""))
         with c2:
+            st.markdown(
+                "<div style='text-align:center; color:#64748b; "
+                "font-size:0.85rem; font-weight:600; margin-bottom:0.25rem;'>"
+                "⚖️ BALANCED</div>",
+                unsafe_allow_html=True)
             y_pred = st.session_state.model_balanced.predict(
                 st.session_state.X_test)
-            st.pyplot(plot_confusion(st.session_state.y_test, y_pred,
-                                     "Balanced RF"))
+            st.pyplot(plot_confusion(st.session_state.y_test, y_pred, ""))
 
         section("Precision-Recall Curve (Balanced)", "📉")
         proba = st.session_state.model_balanced.predict_proba(
@@ -958,49 +969,148 @@ elif page == "🎯 Randomized Search (PR-AUC)":
 # ---------------- PRECISION-RECALL & THRESHOLD ----------------
 elif page == "📉 Precision-Recall & Threshold":
     hero("📉 Precision-Recall & Threshold Tuning",
-         "Dial in your operational trade-off between catching attacks and "
-         "avoiding false alarms.",
+         "Compare thresholds across every model you've trained — side by side.",
          badge="Step 6 / 8")
 
-    if st.session_state.model_best is None and st.session_state.model_balanced is None:
-        st.warning("⚠️ Train a model first (Baseline or Randomized Search).")
+    # ---------- Build the roster of trained models ----------
+    available = {}
+
+    if st.session_state.model_baseline is not None:
+        available["🌲 Default Baseline"] = st.session_state.model_baseline
+    if st.session_state.model_balanced is not None:
+        available["⚖️ Balanced Baseline"] = st.session_state.model_balanced
+    if st.session_state.rand_recall_results is not None:
+        available["🎲 Recall-Optimized (Random Search)"] = (
+            st.session_state.rand_recall_results.best_estimator_)
+    if st.session_state.rand_prauc_results is not None:
+        available["🎯 PR-AUC-Optimized (Random Search)"] = (
+            st.session_state.rand_prauc_results.best_estimator_)
+
+    if not available:
+        st.warning(
+            "⚠️ No trained models found. Please train at least one model on "
+            "**Baseline Models**, **Randomized Search (Recall)**, or "
+            "**Randomized Search (PR-AUC)** first."
+        )
         st.stop()
 
-    model = st.session_state.model_best or st.session_state.model_balanced
+    # ---------- Model selector ----------
+    section("Which model do you want to tune?", "🎛️")
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        chosen_name = st.selectbox(
+            "Select a trained model:",
+            list(available.keys()),
+            index=len(available) - 1,
+            label_visibility="collapsed",
+        )
+    with c2:
+        st.caption(f"**{len(available)}** model(s) available")
+
+    model = available[chosen_name]
     proba = model.predict_proba(st.session_state.X_test)[:, 1]
     st.session_state.y_proba_best = proba
 
+    # ---------- Default-threshold snapshot ----------
+    section("Baseline Metrics (Threshold = 0.50)", "📌")
+    m_default, y_pred_default, _ = evaluate_model(
+        model, st.session_state.X_test, st.session_state.y_test,
+        threshold=0.5)
+    metric_row(m_default)
+
+    # ---------- Interactive threshold slider ----------
     section("Precision-Recall vs Threshold", "🎚️")
     threshold = st.slider(
         "Move the threshold to see the trade-off:",
         min_value=0.0, max_value=1.0, value=0.23, step=0.01,
         help="Lower threshold = higher recall (catch more attacks). "
-             "Higher threshold = higher precision (fewer false alarms)."
+             "Higher threshold = higher precision (fewer false alarms).",
     )
 
     fig = plot_pr_curve(
         st.session_state.y_test, proba,
         threshold=threshold,
-        title=f"Precision-Recall Curve (Threshold = {threshold:.2f})")
+        title=f"Precision-Recall Curve — {chosen_name} "
+              f"(Threshold = {threshold:.2f})",
+    )
     st.pyplot(fig)
 
-    section("Metrics at Selected Threshold", "📊")
-    metrics, y_pred, _ = evaluate_model(
+    # ---------- Metrics at chosen threshold ----------
+    section(f"Metrics at Threshold = {threshold:.2f}", "📊")
+    m_tuned, y_pred_tuned, _ = evaluate_model(
         model, st.session_state.X_test, st.session_state.y_test,
         threshold=threshold)
-    metric_row(metrics)
+    metric_row(m_tuned)
 
+    # ---------- Delta vs default ----------
+    section("Change vs. Default (0.50)", "📈")
+    deltas = {k: m_tuned[k] - m_default[k] for k in m_default}
+
+    def delta_card(label, value):
+        if abs(value) < 0.005:
+            color, arrow = "#64748b", "→"
+        elif value > 0:
+            color, arrow = "#10b981", "▲"
+        else:
+            color, arrow = "#ef4444", "▼"
+        st.markdown(f"""
+        <div class="kpi-card" style="text-align:left;">
+            <div class="kpi-label">{label}</div>
+            <div style="color:{color}; font-size:1.6rem; font-weight:700;
+                        font-variant-numeric: tabular-nums;">
+                {arrow} {value:+.2f}%
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    d1, d2, d3, d4, d5 = st.columns(5)
+    with d1: delta_card("Accuracy",  deltas["Accuracy"])
+    with d2: delta_card("Precision", deltas["Precision"])
+    with d3: delta_card("Recall",    deltas["Recall"])
+    with d4: delta_card("F1 Score",  deltas["F1 Score"])
+    with d5: delta_card("PR-AUC",    deltas["PR-AUC"])
+
+    # ---------- Confusion matrix + report ----------
     section("Confusion Matrix", "🔲")
     st.pyplot(plot_confusion(
-        st.session_state.y_test, y_pred,
-        f"Confusion Matrix — Threshold = {threshold:.2f}"))
+        st.session_state.y_test, y_pred_tuned,
+        f"Confusion Matrix — {chosen_name} @ {threshold:.2f}"))
 
     section("Classification Report", "📋")
     st.dataframe(pd.DataFrame(classification_report(
-        st.session_state.y_test, y_pred, digits=4, output_dict=True
+        st.session_state.y_test, y_pred_tuned, digits=4, output_dict=True
     )).transpose(), use_container_width=True)
 
+    # ---------- Persist threshold + model choice ----------
     st.session_state.custom_threshold = threshold
+    st.session_state.chosen_model_name = chosen_name
+
+    # ---------- All-models comparison table ----------
+    section("All Models — Same Threshold", "🧮")
+    st.caption(
+        f"Comparing every trained model at the same "
+        f"**threshold = {threshold:.2f}**."
+    )
+
+    rows = []
+    for name, m in available.items():
+        mtr, _, _ = evaluate_model(
+            m, st.session_state.X_test, st.session_state.y_test,
+            threshold=threshold)
+        rows.append({
+            "Model":     name,
+            "Accuracy":  f"{mtr['Accuracy']:.2f}%",
+            "Precision": f"{mtr['Precision']:.2f}%",
+            "Recall":    f"{mtr['Recall']:.2f}%",
+            "F1 Score":  f"{mtr['F1 Score']:.2f}%",
+            "PR-AUC":    f"{mtr['PR-AUC']:.2f}%",
+        })
+
+    rows.sort(
+        key=lambda r: float(r["F1 Score"].rstrip("%")),
+        reverse=True,
+    )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     st.info(
         "💡 **Rule of thumb** — for automated account lockouts you may "
@@ -1015,12 +1125,30 @@ elif page == "📊 Feature Importance":
          "Which network features drive the model's attack predictions?",
          badge="Step 7 / 8")
 
-    model = (st.session_state.model_best
-             or st.session_state.model_balanced
-             or st.session_state.model_baseline)
+    # Respect the model chosen on the Threshold page if any
+    chosen_name = st.session_state.get("chosen_model_name")
+    model = None
+    if chosen_name == "🌲 Default Baseline":
+        model = st.session_state.model_baseline
+    elif chosen_name == "⚖️ Balanced Baseline":
+        model = st.session_state.model_balanced
+    elif chosen_name == "🎲 Recall-Optimized (Random Search)" and \
+            st.session_state.rand_recall_results is not None:
+        model = st.session_state.rand_recall_results.best_estimator_
+    elif chosen_name == "🎯 PR-AUC-Optimized (Random Search)" and \
+            st.session_state.rand_prauc_results is not None:
+        model = st.session_state.rand_prauc_results.best_estimator_
+
+    if model is None:
+        model = (st.session_state.model_best
+                 or st.session_state.model_balanced
+                 or st.session_state.model_baseline)
 
     if model is None:
         st.warning("⚠️ Train a model first."); st.stop()
+
+    if chosen_name:
+        st.caption(f"🧠 Showing importances for: **{chosen_name}**")
 
     if not hasattr(model, "feature_importances_"):
         st.error("Model has no feature_importances_."); st.stop()
@@ -1055,7 +1183,23 @@ elif page == "🔮 Predict":
          "Score a CSV of network sessions against the trained model.",
          badge="Step 8 / 8")
 
-    model = (st.session_state.model_best
+    # ---------- Respect the model chosen on the Threshold page ----------
+    chosen_name = st.session_state.get("chosen_model_name")
+    chosen_model = None
+
+    if chosen_name == "🌲 Default Baseline":
+        chosen_model = st.session_state.model_baseline
+    elif chosen_name == "⚖️ Balanced Baseline":
+        chosen_model = st.session_state.model_balanced
+    elif chosen_name == "🎲 Recall-Optimized (Random Search)" and \
+            st.session_state.rand_recall_results is not None:
+        chosen_model = st.session_state.rand_recall_results.best_estimator_
+    elif chosen_name == "🎯 PR-AUC-Optimized (Random Search)" and \
+            st.session_state.rand_prauc_results is not None:
+        chosen_model = st.session_state.rand_prauc_results.best_estimator_
+
+    model = (chosen_model
+             or st.session_state.model_best
              or st.session_state.model_balanced
              or st.session_state.model_baseline)
 
@@ -1063,8 +1207,15 @@ elif page == "🔮 Predict":
         st.warning("⚠️ Train a model first."); st.stop()
 
     threshold = st.session_state.get("custom_threshold", 0.5)
-    st.info(f"🎚️ Using threshold = **{threshold:.2f}** "
-            f"(from the Threshold Tuning page).")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if chosen_name:
+            st.caption(f"🧠 Using model: **{chosen_name}**")
+        else:
+            st.caption("🧠 Using fallback model (no selection on Threshold page).")
+    with c2:
+        st.caption(f"🎚️ Using threshold: **{threshold:.2f}**")
 
     up = st.file_uploader("Upload feature CSV", type=["csv"])
     if up is not None:
