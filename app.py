@@ -685,20 +685,95 @@ elif page == "🌲 Baseline Models":
         st.success("✅ Both baseline models trained.")
 
     if st.session_state.model_balanced is not None:
-        section("Side-by-Side Comparison", "⚖️")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### 🌲 Default")
-            m1, _, _ = evaluate_model(
-                st.session_state.model_baseline,
-                st.session_state.X_test, st.session_state.y_test)
-            metric_row(m1)
-        with c2:
-            st.markdown("#### ⚖️ Balanced")
-            m2, _, _ = evaluate_model(
-                st.session_state.model_balanced,
-                st.session_state.X_test, st.session_state.y_test)
-            metric_row(m2)
+        # ---- Side-by-side comparison (clean) ----
+section("Side-by-Side Comparison", "⚖️")
+
+m1, _, _ = evaluate_model(
+    st.session_state.model_baseline,
+    st.session_state.X_test, st.session_state.y_test)
+m2, _, _ = evaluate_model(
+    st.session_state.model_balanced,
+    st.session_state.X_test, st.session_state.y_test)
+
+def model_card(title, icon, metrics, accent="accent"):
+    rows = ""
+    for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
+        rows += f"""
+        <div style='display:flex; justify-content:space-between;
+                    padding:0.55rem 0; border-bottom:1px solid #f1f5f9;'>
+            <span style='color:#64748b; font-size:0.85rem; font-weight:500;'>
+                {k}
+            </span>
+            <span style='color:#0f172a; font-size:0.95rem; font-weight:700;
+                         font-variant-numeric: tabular-nums;'>
+                {metrics[k]:.2f}%
+            </span>
+        </div>"""
+    return f"""
+    <div style='background:#ffffff; border:1px solid #e2e8f0;
+                border-radius:14px; padding:1.2rem 1.4rem;
+                box-shadow:0 1px 3px rgba(0,0,0,0.04); height:100%;'>
+        <div style='display:flex; align-items:center; gap:0.5rem;
+                    margin-bottom:0.75rem; padding-bottom:0.75rem;
+                    border-bottom:2px solid #e2e8f0;'>
+            <span style='font-size:1.3rem;'>{icon}</span>
+            <span style='font-size:1.05rem; font-weight:700; color:#0f172a;'>
+                {title}
+            </span>
+        </div>
+        {rows}
+    </div>
+    """
+
+def diff_card(m1, m2):
+    rows = ""
+    for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
+        delta = m2[k] - m1[k]
+        if abs(delta) < 0.005:
+            color, arrow, label = "#64748b", "→", "Tie"
+        elif delta > 0:
+            color, arrow, label = "#10b981", "▲", "Balanced"
+        else:
+            color, arrow, label = "#ef4444", "▼", "Default"
+        rows += f"""
+        <div style='display:flex; justify-content:space-between;
+                    align-items:center; padding:0.55rem 0;
+                    border-bottom:1px solid #f1f5f9;'>
+            <span style='color:#64748b; font-size:0.85rem; font-weight:500;'>
+                {k}
+            </span>
+            <span style='display:flex; align-items:center; gap:0.4rem;'>
+                <span style='color:{color}; font-size:0.9rem;
+                             font-weight:700;
+                             font-variant-numeric: tabular-nums;'>
+                    {delta:+.2f}%
+                </span>
+                <span style='color:{color}; font-size:0.7rem;'>{arrow}</span>
+            </span>
+        </div>"""
+    return f"""
+    <div style='background:linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
+                border:1px solid #e2e8f0; border-radius:14px;
+                padding:1.2rem 1.4rem; height:100%;'>
+        <div style='display:flex; align-items:center; gap:0.5rem;
+                    margin-bottom:0.75rem; padding-bottom:0.75rem;
+                    border-bottom:2px solid #e2e8f0;'>
+            <span style='font-size:1.3rem;'>📊</span>
+            <span style='font-size:1.05rem; font-weight:700; color:#0f172a;'>
+                Difference
+            </span>
+        </div>
+        {rows}
+    </div>
+    """
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.markdown(model_card("Default", "🌲", m1), unsafe_allow_html=True)
+with c2:
+    st.markdown(model_card("Balanced", "⚖️", m2), unsafe_allow_html=True)
+with c3:
+    st.markdown(diff_card(m1, m2), unsafe_allow_html=True)
 
         section("Confusion Matrices", "🔲")
         c1, c2 = st.columns(2)
