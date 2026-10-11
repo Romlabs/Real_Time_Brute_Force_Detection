@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Real-Time Brute-Force Detection via Predictive Machine Learning
-Streamlit deployment — SMOTE removed, model selector, dedent-safe HTML.
+Real-Time Brute-Force Detection — Inference Dashboard
+Loads a pre-trained model and lets users test it with feature inputs.
 """
 
-import os
-import warnings
-from textwrap import dedent
+import json
+import joblib
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -14,33 +13,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
-
-from sklearn.model_selection import (
-    train_test_split, GridSearchCV, RandomizedSearchCV
-)
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    average_precision_score, confusion_matrix, classification_report,
-    precision_recall_curve
-)
-from scipy.stats import randint
-
-warnings.filterwarnings("ignore")
+from textwrap import dedent
+from pathlib import Path
 
 # ==================================================================
 # PAGE CONFIG
 # ==================================================================
 st.set_page_config(
-    page_title="Real-Time Brute-Force Detection",
+    page_title="Brute-Force Detection — Inference",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ==================================================================
-# CUSTOM CSS  (dedent-safe)
+# CSS
 # ==================================================================
 st.markdown(dedent("""
 <style>
@@ -65,7 +52,7 @@ st.markdown(dedent("""
                margin: 0 0 0.5rem 0; letter-spacing: -0.02em;
                position: relative; z-index: 1; }
     .hero p  { color: #94a3b8; font-size: 1.05rem; margin: 0;
-               position: relative; z-index: 1; font-weight: 400; }
+               position: relative; z-index: 1; }
     .hero .badge {
         display: inline-block; background: rgba(56, 189, 248, 0.15);
         color: #38bdf8; padding: 4px 12px; border-radius: 999px;
@@ -80,10 +67,8 @@ st.markdown(dedent("""
         padding: 1.1rem 1.3rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         transition: all 0.25s ease; height: 100%;
     }
-    .kpi-card:hover {
-        box-shadow: 0 8px 25px rgba(15, 23, 42, 0.10);
-        transform: translateY(-2px); border-color: #cbd5e1;
-    }
+    .kpi-card:hover { box-shadow: 0 8px 25px rgba(15,23,42,0.10);
+        transform: translateY(-2px); border-color: #cbd5e1; }
     .kpi-label { color: #64748b; font-size: 0.75rem; font-weight: 600;
                  letter-spacing: 0.06em; text-transform: uppercase;
                  margin-bottom: 0.35rem; }
@@ -102,36 +87,20 @@ st.markdown(dedent("""
     }
     .section-header .emoji { margin-right: 0.4rem; }
 
-    .feature-card {
-        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;
-        padding: 1.2rem; height: 100%; transition: all 0.2s ease;
+    .verdict-safe {
+        background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+        border: 2px solid #10b981; border-radius: 18px;
+        padding: 2rem; text-align: center; margin: 1rem 0;
     }
-    .feature-card:hover { border-color: #38bdf8;
-        box-shadow: 0 6px 20px rgba(56, 189, 248, 0.12); }
-    .feature-card h4 { color: #0f172a; font-size: 1rem; font-weight: 700;
-                       margin: 0.6rem 0 0.4rem 0; }
-    .feature-card p  { color: #64748b; font-size: 0.875rem; margin: 0;
-                       line-height: 1.5; }
-    .feature-icon { font-size: 1.8rem; display: inline-block; }
-
-    .step-list { list-style: none; padding: 0; counter-reset: step; }
-    .step-list li {
-        counter-increment: step;
-        padding: 0.75rem 1rem 0.75rem 3rem; margin-bottom: 0.5rem;
-        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px;
-        position: relative; font-size: 0.92rem; color: #334155;
-        transition: all 0.2s ease;
+    .verdict-attack {
+        background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+        border: 2px solid #ef4444; border-radius: 18px;
+        padding: 2rem; text-align: center; margin: 1rem 0;
     }
-    .step-list li::before {
-        content: counter(step); position: absolute; left: 0.9rem;
-        top: 50%; transform: translateY(-50%); width: 26px; height: 26px;
-        background: linear-gradient(135deg, #0ea5e9, #0284c7);
-        color: white; border-radius: 50%; display: flex;
-        align-items: center; justify-content: center;
-        font-weight: 700; font-size: 0.8rem;
-    }
-    .step-list li:hover { border-color: #38bdf8; background: #f0f9ff;
-        transform: translateX(4px); }
+    .verdict-safe h2   { color: #065f46; margin: 0; font-size: 2rem; }
+    .verdict-attack h2 { color: #991b1b; margin: 0; font-size: 2rem; }
+    .verdict-safe p, .verdict-attack p { margin: 0.5rem 0 0 0;
+        font-size: 1rem; opacity: 0.75; }
 
     section[data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
@@ -146,123 +115,57 @@ st.markdown(dedent("""
     section[data-testid="stSidebar"] .stRadio label:hover {
         background: rgba(56, 189, 248, 0.15);
     }
-    section[data-testid="stSidebar"] hr { border-color: rgba(148, 163, 184, 0.2); }
-    section[data-testid="stSidebar"] .caption,
-    section[data-testid="stSidebar"] small { color: #94a3b8 !important;
-        font-size: 0.75rem; }
+    section[data-testid="stSidebar"] hr { border-color: rgba(148,163,184,0.2); }
 
     .stButton > button {
         background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
         color: white; border: none; border-radius: 10px;
         padding: 0.55rem 1.4rem; font-weight: 600; font-size: 0.9rem;
-        transition: all 0.2s ease; box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+        transition: all 0.2s ease; box-shadow: 0 2px 8px rgba(14,165,233,0.3);
     }
     .stButton > button:hover {
         transform: translateY(-1px);
-        box-shadow: 0 6px 18px rgba(14, 165, 233, 0.4);
-        color: white; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+        box-shadow: 0 6px 18px rgba(14,165,233,0.4);
+        color: white;
     }
     .stDownloadButton > button {
         background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-        box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3) !important;
+        box-shadow: 0 2px 8px rgba(16,185,129,0.3) !important;
     }
     .stDataFrame { border-radius: 10px; overflow: hidden;
         border: 1px solid #e2e8f0; }
-    .stAlert { border-radius: 10px; border-left-width: 4px; }
     hr { border: none; border-top: 1px solid #e2e8f0; margin: 1.5rem 0; }
 </style>
 """).strip(), unsafe_allow_html=True)
 
 # ==================================================================
-# SESSION STATE
+# LOAD ARTIFACTS (cached)
 # ==================================================================
-def init_state():
-    defaults = {
-        "df_raw": None, "df_clean": None,
-        "X_train": None, "X_test": None,
-        "y_train": None, "y_test": None,
-        "feature_names": None, "scaler": None,
-        "model_baseline": None,
-        "model_balanced": None,
-        "model_best": None,
-        "model_name": None,
-        "metrics": None,
-        "grid_results": None,
-        "rand_recall_results": None,
-        "rand_prauc_results": None,
-        "y_proba_best": None,
-        "custom_threshold": 0.5,
-        "chosen_model_name": None,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+BASE = Path(__file__).parent
 
-init_state()
+@st.cache_resource(show_spinner="Loading trained model...")
+def load_artifacts():
+    model  = joblib.load(BASE / "model.pkl")
+    scaler = joblib.load(BASE / "scaler.pkl")
+    with open(BASE / "feature_names.json") as f:
+        feature_names = json.load(f)
+    with open(BASE / "encoders.json") as f:
+        encoders = json.load(f)
+    return model, scaler, feature_names, encoders
 
-sns.set_style("whitegrid")
-plt.rcParams.update({
-    "figure.facecolor": "white",
-    "axes.facecolor": "#f8fafc",
-    "axes.edgecolor": "#cbd5e1",
-    "axes.labelcolor": "#334155",
-    "axes.titlecolor": "#0f172a",
-    "axes.titleweight": "bold",
-    "axes.titlesize": 12,
-    "font.size": 10,
-    "axes.grid": True,
-    "grid.color": "#e2e8f0",
-    "grid.linewidth": 0.8,
-})
-ACCENT = "#0ea5e9"
-ACCENT2 = "#f59e0b"
-
-# ==================================================================
-# SIDEBAR
-# ==================================================================
-with st.sidebar:
-    st.markdown(dedent("""
-    <div style='display:flex; align-items:center; gap:0.6rem; margin-bottom:0.25rem;'>
-        <span style='font-size:1.6rem;'>🛡️</span>
-        <span style='font-size:1.25rem; font-weight:800; letter-spacing:-0.02em;'>
-            Brute-Force Detection
-        </span>
-    </div>
-    <div style='color:#94a3b8; font-size:0.78rem; margin-bottom:1.5rem;'>
-        Random Forest · Threshold Tuning
-    </div>
-    """).strip(), unsafe_allow_html=True)
-
-    st.markdown("##### 🧭 Navigation")
-    page = st.radio(
-        "Navigation",
-        [
-            "🏠 Overview",
-            "📥 Load Data",
-            "🧹 Data Cleaning",
-            "✂️ Split & Scale",
-            "🌲 Baseline Models",
-            "🔧 Grid Search",
-            "🎲 Randomized Search (Recall)",
-            "🎯 Randomized Search (PR-AUC)",
-            "📉 Precision-Recall & Threshold",
-            "📊 Feature Importance",
-            "🔮 Predict",
-        ],
-        label_visibility="collapsed",
+try:
+    MODEL, SCALER, FEATURE_NAMES, ENCODERS = load_artifacts()
+except FileNotFoundError as e:
+    st.error(
+        "❌ Required model artifacts are missing. Please ensure "
+        "`model.pkl`, `scaler.pkl`, `feature_names.json`, and "
+        "`encoders.json` are committed to the repo.\n\n"
+        f"Missing file: `{e.filename}`"
     )
-
-    st.markdown("---")
-    st.markdown(dedent("""
-    <div style='font-size:0.72rem; color:#64748b; line-height:1.6;'>
-        <b style='color:#94a3b8;'>⚙️ Environment</b><br>
-        Python 3.11 · Streamlit Cloud<br>
-        n_jobs=1 · cv=2 (cloud-safe)
-    </div>
-    """).strip(), unsafe_allow_html=True)
+    st.stop()
 
 # ==================================================================
-# UI HELPERS (dedent-safe)
+# UI HELPERS
 # ==================================================================
 def hero(title, subtitle, badge=None):
     badge_html = f"<div class='badge'>{badge}</div>" if badge else ""
@@ -296,125 +199,97 @@ def kpi(label, value, variant=""):
     st.markdown(html, unsafe_allow_html=True)
 
 
-def metric_row(m):
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: kpi("Accuracy",  f"{m['Accuracy']:.2f}%",  "accent")
-    with c2: kpi("Precision", f"{m['Precision']:.2f}%", "good")
-    with c3: kpi("Recall",    f"{m['Recall']:.2f}%",    "good")
-    with c4: kpi("F1 Score",  f"{m['F1 Score']:.2f}%",  "accent")
-    with c5: kpi("PR-AUC",    f"{m['PR-AUC']:.2f}%",    "warn")
-
-
-def feature_card(icon, title, body):
-    html = dedent(f"""
-    <div class="feature-card">
-        <div class="feature-icon">{icon}</div>
-        <h4>{title}</h4>
-        <p>{body}</p>
-    </div>
-    """).strip()
+def verdict_card(is_attack, probability):
+    if is_attack:
+        html = dedent(f"""
+        <div class="verdict-attack">
+            <h2>⚠️ Brute-Force Attack Detected</h2>
+            <p>Predicted attack probability: <b>{probability:.2%}</b></p>
+        </div>
+        """).strip()
+    else:
+        html = dedent(f"""
+        <div class="verdict-safe">
+            <h2>✅ Session Appears Benign</h2>
+            <p>Predicted attack probability: <b>{probability:.2%}</b></p>
+        </div>
+        """).strip()
     st.markdown(html, unsafe_allow_html=True)
 
 
 # ==================================================================
-# ML HELPERS
+# PREDICTION HELPERS
 # ==================================================================
-@st.cache_data(show_spinner=False)
-def load_from_kaggle():
-    import kagglehub
-    path = kagglehub.dataset_download(
-        "dnkumars/cybersecurity-intrusion-detection-dataset"
+def prepare_input(input_dict):
+    """Convert a raw feature dict into a scaled numpy array."""
+    row = {}
+    for feat in FEATURE_NAMES:
+        val = input_dict.get(feat, 0)
+
+        # Apply encoder for categorical features
+        if feat in ENCODERS:
+            # val may already be an encoded int (from a selectbox)
+            row[feat] = val
+        else:
+            row[feat] = float(val)
+
+    X = pd.DataFrame([row], columns=FEATURE_NAMES)
+    return SCALER.transform(X)
+
+
+def predict_single(input_dict):
+    X_scaled = prepare_input(input_dict)
+    proba = MODEL.predict_proba(X_scaled)[0, 1]
+    pred  = int(proba >= 0.5)
+    return pred, proba
+
+
+def predict_batch(df):
+    """Batch prediction on a cleaned DataFrame."""
+    X = df.reindex(columns=FEATURE_NAMES, fill_value=0)
+    X_scaled = SCALER.transform(X)
+    probas = MODEL.predict_proba(X_scaled)[:, 1]
+    preds  = (probas >= 0.5).astype(int)
+    return preds, probas
+
+
+# ==================================================================
+# SIDEBAR
+# ==================================================================
+with st.sidebar:
+    st.markdown(dedent("""
+    <div style='display:flex; align-items:center; gap:0.6rem; margin-bottom:0.25rem;'>
+        <span style='font-size:1.6rem;'>🛡️</span>
+        <span style='font-size:1.25rem; font-weight:800; letter-spacing:-0.02em;'>
+            Brute-Force Detection
+        </span>
+    </div>
+    <div style='color:#94a3b8; font-size:0.78rem; margin-bottom:1.5rem;'>
+        Inference Dashboard · Pre-trained Model
+    </div>
+    """).strip(), unsafe_allow_html=True)
+
+    st.markdown("##### 🧭 Navigation")
+    page = st.radio(
+        "Navigation",
+        [
+            "🏠 Overview",
+            "🎛️ Single Session Test",
+            "📂 Batch Prediction (CSV)",
+            "📊 Model Information",
+        ],
+        label_visibility="collapsed",
     )
-    csv_file = None
-    for f in os.listdir(path):
-        if f.endswith(".csv"):
-            csv_file = os.path.join(path, f)
-            break
-    if csv_file is None:
-        raise FileNotFoundError("No CSV found.")
-    return pd.read_csv(csv_file)
 
-
-def clean_dataframe(df: pd.DataFrame):
-    df = df.copy()
-    if "session_id" in df.columns:
-        df = df.drop("session_id", axis=1)
-    if "encryption_used" in df.columns:
-        df["encryption_used"] = df["encryption_used"].fillna("None")
-    le = LabelEncoder()
-    for col in ["protocol_type", "browser_type", "encryption_used"]:
-        if col in df.columns:
-            df[col] = le.fit_transform(df[col].astype(str))
-    df = df.drop_duplicates().reset_index(drop=True)
-    return df
-
-
-def split_and_scale(df):
-    X = df.drop("attack_detected", axis=1)
-    y = df["attack_detected"]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.20, random_state=42, stratify=y
-    )
-    cat_cols = X_train.select_dtypes(include=["object", "category"]).columns
-    X_train = pd.get_dummies(X_train, columns=cat_cols, drop_first=True)
-    X_test = pd.get_dummies(X_test, columns=cat_cols, drop_first=True)
-    X_train, X_test = X_train.align(X_test, join="left", axis=1, fill_value=0)
-    feature_names = X_train.columns.tolist()
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_test_s = scaler.transform(X_test)
-    return X_train_s, X_test_s, y_train, y_test, feature_names, scaler
-
-
-def evaluate_model(model, X_test, y_test, threshold=None):
-    if threshold is not None and hasattr(model, "predict_proba"):
-        proba = model.predict_proba(X_test)[:, 1]
-        y_pred = (proba >= threshold).astype(int)
-    else:
-        y_pred = model.predict(X_test)
-        proba = (model.predict_proba(X_test)[:, 1]
-                 if hasattr(model, "predict_proba") else y_pred)
-    return {
-        "Accuracy": accuracy_score(y_test, y_pred) * 100,
-        "Precision": precision_score(y_test, y_pred, zero_division=0) * 100,
-        "Recall": recall_score(y_test, y_pred, zero_division=0) * 100,
-        "F1 Score": f1_score(y_test, y_pred, zero_division=0) * 100,
-        "PR-AUC": average_precision_score(y_test, proba) * 100,
-    }, y_pred, proba
-
-
-def plot_confusion(y_test, y_pred, title):
-    cm = confusion_matrix(y_test, y_pred)
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=np.unique(y_test),
-                yticklabels=np.unique(y_test),
-                cbar=False, ax=ax,
-                annot_kws={"fontsize": 14, "fontweight": "bold"})
-    ax.set_xlabel("Predicted", fontweight="bold")
-    ax.set_ylabel("True", fontweight="bold")
-    if title:
-        ax.set_title(title, pad=12)
-    plt.tight_layout()
-    return fig
-
-
-def plot_pr_curve(y_test, y_proba, threshold=None, title="Precision-Recall Curve"):
-    precisions, recalls, thresholds = precision_recall_curve(y_test, y_proba)
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(thresholds, precisions[:-1], color=ACCENT, lw=2.2, label="Precision")
-    ax.plot(thresholds, recalls[:-1], color=ACCENT2, lw=2.2, label="Recall")
-    if threshold is not None:
-        ax.axvline(threshold, color="#dc2626", ls="--", lw=1.5,
-                   label=f"Threshold = {threshold:.2f}")
-    ax.set_xlabel("Threshold", fontweight="bold")
-    ax.set_ylabel("Score", fontweight="bold")
-    ax.set_title(title, pad=12)
-    ax.legend(loc="center left", frameon=True)
-    ax.set_ylim(-0.02, 1.02)
-    plt.tight_layout()
-    return fig
-
+    st.markdown("---")
+    st.markdown(dedent(f"""
+    <div style='font-size:0.72rem; color:#64748b; line-height:1.6;'>
+        <b style='color:#94a3b8;'>⚙️ Model Status</b><br>
+        ✅ Loaded: Random Forest<br>
+        ✅ Features: {len(FEATURE_NAMES)}<br>
+        ✅ Scaler: StandardScaler<br>
+    </div>
+    """).strip(), unsafe_allow_html=True)
 
 # ==================================================================
 # PAGES
@@ -424,820 +299,206 @@ def plot_pr_curve(y_test, y_proba, threshold=None, title="Precision-Recall Curve
 if page == "🏠 Overview":
     hero(
         "🛡️ Real-Time Brute-Force Detection",
-        "Predictive machine learning with PR-curve tuning, threshold "
-        "optimization, and model comparison.",
-        badge="ML Pipeline · v3",
+        "Test a pre-trained Random Forest classifier by adjusting "
+        "network session features.",
+        badge="Inference · v1.0",
     )
 
-    section("Pipeline Overview", "🔬")
+    section("How to Use This System", "💡")
     st.markdown(dedent("""
-    <ol class="step-list">
-        <li><b>Load</b> the Cybersecurity Intrusion Detection dataset</li>
-        <li><b>Clean</b> — fill NaNs, label-encode, dedup</li>
-        <li><b>Split &amp; Scale</b> — 80/20 stratified split + StandardScaler</li>
-        <li><b>Train</b> baseline + class-balanced Random Forests</li>
-        <li><b>Tune</b> via Grid Search, then Randomized Search (Recall &amp; PR-AUC)</li>
-        <li><b>Tune the probability threshold</b> on the Precision-Recall curve</li>
-        <li><b>Visualize</b> metrics, confusion matrices, and feature importances</li>
+    <ol style='font-size:1rem; line-height:1.8; color:#334155;'>
+        <li><b>Single Session Test</b> — adjust feature sliders to simulate
+            a network session, then click <i>Predict</i> to see if the model
+            classifies it as benign or an attack.</li>
+        <li><b>Batch Prediction</b> — upload a CSV of many sessions to score
+            them all at once.</li>
+        <li><b>Model Information</b> — inspect the loaded model's structure
+            and feature importances.</li>
     </ol>
     """).strip(), unsafe_allow_html=True)
 
-    section("What Makes This Pipeline Work", "✨")
+    section("Loaded Model", "🧠")
     c1, c2, c3 = st.columns(3)
-    with c1:
-        feature_card("🎯", "PR-AUC Optimization",
-                     "Randomized Search scored on `average_precision` — "
-                     "the right metric for imbalanced attack detection.")
-    with c2:
-        feature_card("📉", "Threshold Tuning",
-                     "Predictions tuned on the Precision-Recall curve to "
-                     "balance recall vs. false alarms.")
-    with c3:
-        feature_card("⚖️", "Class Balancing",
-                     "`class_weight='balanced'` — the model naturally "
-                     "weights the minority (attack) class more heavily.")
+    with c1: kpi("Algorithm", "Random Forest", "accent")
+    with c2: kpi("Features",  f"{len(FEATURE_NAMES)}", "accent")
+    with c3: kpi("Estimators", f"{MODEL.n_estimators}", "good")
 
-    st.info(
-        "⚙️ **Cloud-safe:** searches use small grids, `n_jobs=1`, `cv=2` "
-        "to fit the ~1 GB / 1 CPU Streamlit container."
-    )
+    section("About the Model", "📖")
+    st.markdown(dedent(f"""
+    This dashboard serves a **Random Forest classifier** trained on the
+    *Cybersecurity Intrusion Detection* dataset. The model:
 
-    section("At a Glance", "📊")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi("Model",       "Random Forest",   "accent")
-    with c2: kpi("Imbalance",   "class_weight",    "good")
-    with c3: kpi("Tuning",      "Grid + Rand.",    "accent")
-    with c4: kpi("Key Metric",  "PR-AUC",          "warn")
+    - Was trained with **{MODEL.n_estimators} decision trees**
+    - Uses `class_weight='balanced'` to handle class imbalance
+    - Consumes **{len(FEATURE_NAMES)} engineered features**
+    - Outputs the probability that a session is a brute-force attack
+
+    **Training happened offline once.** This app only performs inference.
+    """).strip())
 
 
-# ---------------- LOAD DATA ----------------
-elif page == "📥 Load Data":
-    hero("📥 Load Dataset", "Fetch from Kaggle or upload your own CSV.",
-         badge="Step 1 / 8")
+# ---------------- SINGLE SESSION TEST ----------------
+elif page == "🎛️ Single Session Test":
+    hero("🎛️ Single Session Test",
+         "Adjust the features below and click Predict to test the model.",
+         badge="Interactive Inference")
 
-    source = st.radio(
-        "Choose a data source:",
-        ["Kaggle (auto-download)", "Upload CSV"],
-        horizontal=True,
-    )
+    section("Session Features", "🎚️")
 
-    if source == "Kaggle (auto-download)":
-        if st.button("⬇️ Download from Kaggle"):
-            with st.spinner("Downloading dataset..."):
-                try:
-                    df = load_from_kaggle()
-                    st.session_state.df_raw = df
-                    st.success(f"✅ Loaded **{len(df):,}** rows.")
-                except Exception as e:
-                    st.error(f"Failed: {e}")
-    else:
-        up = st.file_uploader("Upload CSV", type=["csv"])
-        if up is not None:
-            st.session_state.df_raw = pd.read_csv(up)
-            st.success(f"✅ Loaded **{len(st.session_state.df_raw):,}** rows.")
-
-    df = st.session_state.df_raw
-    if df is not None:
-        section("Dataset Summary", "📊")
+    # ---------- Feature input form ----------
+    with st.form("session_form"):
+        # --- Row 1: Numeric features ---
         c1, c2, c3 = st.columns(3)
-        with c1: kpi("Rows", f"{df.shape[0]:,}", "accent")
-        with c2: kpi("Columns", f"{df.shape[1]}", "accent")
-        with c3: kpi("Duplicates", f"{int(df.duplicated().sum())}", "warn")
 
-        section("Preview", "👀")
-        st.dataframe(df.head(10), use_container_width=True)
-
-        with st.expander("🔎 Data types / missing values / describe"):
-            t1, t2, t3 = st.tabs(["Data Types", "Missing", "Statistics"])
-            with t1:
-                st.dataframe(df.dtypes.astype(str).rename("dtype"),
-                             use_container_width=True)
-            with t2:
-                miss = df.isnull().sum().rename("missing")
-                st.dataframe(miss, use_container_width=True)
-                if miss.sum() > 0:
-                    st.warning(f"⚠️ {miss.sum()} missing values detected. "
-                               f"They will be handled in the Cleaning step.")
-            with t3:
-                st.dataframe(df.describe(), use_container_width=True)
-
-
-# ---------------- DATA CLEANING ----------------
-elif page == "🧹 Data Cleaning":
-    hero("🧹 Data Cleaning",
-         "Fill missing values, drop identifiers, label-encode categoricals, dedup.",
-         badge="Step 2 / 8")
-
-    if st.session_state.df_raw is None:
-        st.warning("⚠️ Load a dataset first."); st.stop()
-
-    if st.button("▶️ Run Cleaning"):
-        with st.spinner("Cleaning..."):
-            st.session_state.df_clean = clean_dataframe(st.session_state.df_raw)
-        st.success(f"✅ Cleaned: {len(st.session_state.df_raw):,} → "
-                   f"{len(st.session_state.df_clean):,} rows")
-
-    df = st.session_state.df_clean
-    if df is not None:
-        section("Cleaned Preview", "👀")
-        st.dataframe(df.head(10), use_container_width=True)
-
-        if "attack_detected" in df.columns:
-            col1, col2 = st.columns(2)
-            with col1:
-                section("Target Distribution", "🎯")
-                fig, ax = plt.subplots(figsize=(6, 4))
-                vc = df["attack_detected"].value_counts()
-                ax.bar(vc.index.astype(str), vc.values,
-                       color=[ACCENT, ACCENT2], edgecolor="white", linewidth=1.5)
-                ax.set_xlabel("attack_detected"); ax.set_ylabel("Count")
-                for i, v in enumerate(vc.values):
-                    ax.text(i, v, f"{v:,}", ha="center", va="bottom",
-                            fontweight="bold")
-                st.pyplot(fig)
-                pct = df["attack_detected"].value_counts(normalize=True) * 100
-                st.caption(
-                    f"**Class 0:** {pct.get(0, 0):.1f}% · "
-                    f"**Class 1:** {pct.get(1, 0):.1f}%"
-                )
-            with col2:
-                section("Correlation Matrix", "🔥")
-                num = df.select_dtypes(include=[np.number])
-                fig, ax = plt.subplots(figsize=(7, 5))
-                sns.heatmap(num.corr(), annot=True, cmap="coolwarm",
-                            fmt=".2f", ax=ax, cbar_kws={"shrink": 0.8},
-                            annot_kws={"fontsize": 8})
-                st.pyplot(fig)
-
-        if "session_duration" in df.columns:
-            section("Outlier Check — session_duration", "📦")
-
-            Q1 = df["session_duration"].quantile(0.25)
-            Q3 = df["session_duration"].quantile(0.75)
-            IQR = Q3 - Q1
-            lower = Q1 - 1.5 * IQR
-            upper = Q3 + 1.5 * IQR
-
-            n_out = int(((df["session_duration"] < lower) |
-                         (df["session_duration"] > upper)).sum())
-
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: kpi("Q1", f"{Q1:.2f}", "accent")
-            with c2: kpi("Q3", f"{Q3:.2f}", "accent")
-            with c3: kpi("IQR", f"{IQR:.2f}", "accent")
-            with c4: kpi("Bounds", f"{lower:.0f} / {upper:.0f}", "warn")
-            with c5: kpi("Outliers", f"{n_out:,}", "danger")
-
-            fig, ax = plt.subplots(figsize=(10, 2.5))
-            ax.boxplot(df["session_duration"].dropna(), vert=False,
-                       patch_artist=True,
-                       boxprops=dict(facecolor="#bfdbfe", edgecolor=ACCENT),
-                       medianprops=dict(color="#dc2626", linewidth=2))
-            ax.set_xlabel("session_duration")
-            st.pyplot(fig)
-
-
-# ---------------- SPLIT & SCALE ----------------
-elif page == "✂️ Split & Scale":
-    hero("✂️ Split & Scale",
-         "80/20 stratified train-test split + StandardScaler. "
-         "No resampling applied.",
-         badge="Step 3 / 8")
-
-    if st.session_state.df_clean is None:
-        st.warning("⚠️ Run cleaning first."); st.stop()
-
-    if st.button("▶️ Run Split & Scale"):
-        with st.spinner("Splitting and scaling..."):
-            (X_train, X_test, y_train, y_test,
-             names, scaler) = split_and_scale(st.session_state.df_clean)
-            st.session_state.X_train = X_train
-            st.session_state.X_test = X_test
-            st.session_state.y_train = y_train
-            st.session_state.y_test = y_test
-            st.session_state.feature_names = names
-            st.session_state.scaler = scaler
-        st.success("✅ Split & scale complete (no SMOTE).")
-
-    if st.session_state.y_train is not None:
-        section("Split Overview", "🧮")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: kpi("Train rows", f"{len(st.session_state.y_train):,}", "accent")
-        with c2: kpi("Test rows",  f"{len(st.session_state.y_test):,}",  "accent")
-        with c3: kpi("Features",   f"{len(st.session_state.feature_names)}", "accent")
-        with c4: kpi("Test ratio", "20%", "warn")
-
-        section("Class Distribution (Train vs Test)", "📊")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Train**")
-            fig, ax = plt.subplots(figsize=(6, 4))
-            vc = st.session_state.y_train.value_counts()
-            ax.bar(vc.index.astype(str), vc.values,
-                   color=[ACCENT, ACCENT2], edgecolor="white", linewidth=1.5)
-            for i, v in enumerate(vc.values):
-                ax.text(i, v, f"{v:,}", ha="center", va="bottom",
-                        fontweight="bold")
-            ax.set_xlabel("attack_detected"); ax.set_ylabel("Count")
-            st.pyplot(fig)
-        with col2:
-            st.markdown("**Test**")
-            fig, ax = plt.subplots(figsize=(6, 4))
-            vc = st.session_state.y_test.value_counts()
-            ax.bar(vc.index.astype(str), vc.values,
-                   color=[ACCENT, ACCENT2], edgecolor="white", linewidth=1.5)
-            for i, v in enumerate(vc.values):
-                ax.text(i, v, f"{v:,}", ha="center", va="bottom",
-                        fontweight="bold")
-            ax.set_xlabel("attack_detected"); ax.set_ylabel("Count")
-            st.pyplot(fig)
-
-        st.info(
-            "💡 **Imbalance is preserved** — that's why we use "
-            "`class_weight='balanced'` and threshold tuning instead of SMOTE."
-        )
-
-
-# ---------------- BASELINE MODELS ----------------
-elif page == "🌲 Baseline Models":
-    hero("🌲 Baseline Models",
-         "Train two baseline Random Forests: default vs. class_weight='balanced'.",
-         badge="Step 4 / 8")
-
-    if st.session_state.X_train is None:
-        st.warning("⚠️ Run Split & Scale first."); st.stop()
-
-    if st.button("▶️ Train Both Baselines"):
-        with st.spinner("Training baselines..."):
-            rf_default = RandomForestClassifier(random_state=42, n_jobs=1)
-            rf_balanced = RandomForestClassifier(
-                random_state=42, n_jobs=1, class_weight="balanced"
-            )
-            rf_default.fit(st.session_state.X_train, st.session_state.y_train)
-            rf_balanced.fit(st.session_state.X_train, st.session_state.y_train)
-            st.session_state.model_baseline = rf_default
-            st.session_state.model_balanced = rf_balanced
-
-        st.success("✅ Both baseline models trained.")
-
-    if st.session_state.model_balanced is not None:
-        section("Side-by-Side Comparison", "⚖️")
-
-        m1, _, _ = evaluate_model(
-            st.session_state.model_baseline,
-            st.session_state.X_test, st.session_state.y_test)
-        m2, _, _ = evaluate_model(
-            st.session_state.model_balanced,
-            st.session_state.X_test, st.session_state.y_test)
-
-        def model_card(title, icon, metrics):
-            rows = ""
-            for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
-                rows += (
-                    f"<div style='display:flex; justify-content:space-between;"
-                    f" padding:0.55rem 0; border-bottom:1px solid #f1f5f9;'>"
-                    f"<span style='color:#64748b; font-size:0.85rem;"
-                    f" font-weight:500;'>{k}</span>"
-                    f"<span style='color:#0f172a; font-size:0.95rem;"
-                    f" font-weight:700; font-variant-numeric: tabular-nums;'>"
-                    f"{metrics[k]:.2f}%</span>"
-                    f"</div>"
-                )
-            return dedent(f"""
-            <div style='background:#ffffff; border:1px solid #e2e8f0;
-                        border-radius:14px; padding:1.2rem 1.4rem;
-                        box-shadow:0 1px 3px rgba(0,0,0,0.04); height:100%;'>
-                <div style='display:flex; align-items:center; gap:0.5rem;
-                            margin-bottom:0.75rem; padding-bottom:0.75rem;
-                            border-bottom:2px solid #e2e8f0;'>
-                    <span style='font-size:1.3rem;'>{icon}</span>
-                    <span style='font-size:1.05rem; font-weight:700;
-                                 color:#0f172a;'>{title}</span>
-                </div>
-                {rows}
-            </div>
-            """).strip()
-
-        def diff_card(m1, m2):
-            rows = ""
-            for k in ["Accuracy", "Precision", "Recall", "F1 Score", "PR-AUC"]:
-                delta = m2[k] - m1[k]
-                if abs(delta) < 0.005:
-                    color, arrow = "#64748b", "→"
-                elif delta > 0:
-                    color, arrow = "#10b981", "▲"
-                else:
-                    color, arrow = "#ef4444", "▼"
-                rows += (
-                    f"<div style='display:flex; justify-content:space-between;"
-                    f" align-items:center; padding:0.55rem 0;"
-                    f" border-bottom:1px solid #f1f5f9;'>"
-                    f"<span style='color:#64748b; font-size:0.85rem;"
-                    f" font-weight:500;'>{k}</span>"
-                    f"<span style='color:{color}; font-size:0.9rem;"
-                    f" font-weight:700; font-variant-numeric: tabular-nums;'>"
-                    f"{arrow} {delta:+.2f}%</span>"
-                    f"</div>"
-                )
-            return dedent(f"""
-            <div style='background:linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
-                        border:1px solid #e2e8f0; border-radius:14px;
-                        padding:1.2rem 1.4rem; height:100%;'>
-                <div style='display:flex; align-items:center; gap:0.5rem;
-                            margin-bottom:0.75rem; padding-bottom:0.75rem;
-                            border-bottom:2px solid #e2e8f0;'>
-                    <span style='font-size:1.3rem;'>📊</span>
-                    <span style='font-size:1.05rem; font-weight:700;
-                                 color:#0f172a;'>Difference</span>
-                </div>
-                {rows}
-            </div>
-            """).strip()
-
-        c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown(model_card("Default", "🌲", m1), unsafe_allow_html=True)
+            network_packet_size = st.slider(
+                "network_packet_size",
+                min_value=0, max_value=2000, value=500, step=10,
+                help="Size of the network packet in bytes.")
+
+            login_attempts = st.slider(
+                "login_attempts",
+                min_value=0, max_value=20, value=1, step=1,
+                help="Number of login attempts in this session.")
+
         with c2:
-            st.markdown(model_card("Balanced", "⚖️", m2), unsafe_allow_html=True)
+            session_duration = st.slider(
+                "session_duration",
+                min_value=0.0, max_value=2000.0, value=60.0, step=1.0,
+                help="Duration of the session in seconds.")
+
+            failed_logins = st.slider(
+                "failed_logins",
+                min_value=0, max_value=20, value=0, step=1,
+                help="Number of failed login attempts.")
+
         with c3:
-            st.markdown(diff_card(m1, m2), unsafe_allow_html=True)
+            ip_reputation_score = st.slider(
+                "ip_reputation_score",
+                min_value=0.0, max_value=1.0, value=0.5, step=0.01,
+                help="Reputation score of the source IP (0 = bad, 1 = good).")
 
-        wins = sum(1 for k in m1 if m2[k] > m1[k] + 0.005)
-        ties = sum(1 for k in m1 if abs(m2[k] - m1[k]) <= 0.005)
-        losses = sum(1 for k in m1 if m1[k] > m2[k] + 0.005)
-        st.caption(
-            f"🏆 **Balanced** wins on **{wins}/5** metrics · "
-            f"**{ties}** tie · **Default** wins on **{losses}/5**"
-        )
+            unusual_time_access = st.selectbox(
+                "unusual_time_access",
+                options=[0, 1],
+                format_func=lambda x: "No (0)" if x == 0 else "Yes (1)",
+                help="Was the access at an unusual time?")
 
-        section("Confusion Matrices", "🔲")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(dedent("""
-            <div style='text-align:center; color:#64748b;
-                        font-size:0.85rem; font-weight:600;
-                        margin-bottom:0.25rem;'>
-                🌲 DEFAULT
-            </div>
-            """).strip(), unsafe_allow_html=True)
-            y_pred = st.session_state.model_baseline.predict(
-                st.session_state.X_test)
-            st.pyplot(plot_confusion(st.session_state.y_test, y_pred, ""))
-        with c2:
-            st.markdown(dedent("""
-            <div style='text-align:center; color:#64748b;
-                        font-size:0.85rem; font-weight:600;
-                        margin-bottom:0.25rem;'>
-                ⚖️ BALANCED
-            </div>
-            """).strip(), unsafe_allow_html=True)
-            y_pred = st.session_state.model_balanced.predict(
-                st.session_state.X_test)
-            st.pyplot(plot_confusion(st.session_state.y_test, y_pred, ""))
+        # --- Row 2: Categorical features ---
+        c4, c5, c6 = st.columns(3)
 
-        section("Precision-Recall Curve (Balanced)", "📉")
-        proba = st.session_state.model_balanced.predict_proba(
-            st.session_state.X_test)[:, 1]
-        st.pyplot(plot_pr_curve(st.session_state.y_test, proba,
-                                title="Precision-Recall — Balanced RF"))
+        with c4:
+            protocol_type = st.selectbox(
+                "protocol_type",
+                options=list(ENCODERS.get("protocol_type", {"tcp": 0}).keys()),
+                help="Network protocol used.")
 
+        with c5:
+            browser_type = st.selectbox(
+                "browser_type",
+                options=list(ENCODERS.get("browser_type", {"chrome": 0}).keys()),
+                help="Browser used in the session.")
 
-# ---------------- GRID SEARCH ----------------
-elif page == "🔧 Grid Search":
-    hero("🔧 Grid Search",
-         "Exhaustive search over a compact hyperparameter grid (cloud-safe).",
-         badge="Step 5a / 8")
+        with c6:
+            encryption_used = st.selectbox(
+                "encryption_used",
+                options=list(ENCODERS.get("encryption_used", {"None": 0}).keys()),
+                help="Encryption protocol used.")
 
-    if st.session_state.X_train is None:
-        st.warning("⚠️ Run Split & Scale first."); st.stop()
+        submit = st.form_submit_button("🔮 Predict")
 
-    st.info("⚙️ Reduced grid · `cv=2` · `n_jobs=1` — tuned for the "
-            "Streamlit Cloud container.")
-
-    if st.button("▶️ Run Grid Search"):
-        param_grid = {
-            "n_estimators":      [50, 100],
-            "max_features":      ["sqrt"],
-            "max_depth":         [10, 20],
-            "min_samples_split": [2, 5],
+    # ---------- Handle submission ----------
+    if submit:
+        input_dict = {
+            "network_packet_size":  network_packet_size,
+            "protocol_type":        ENCODERS["protocol_type"][protocol_type],
+            "login_attempts":       login_attempts,
+            "session_duration":     session_duration,
+            "encryption_used":      ENCODERS["encryption_used"][encryption_used],
+            "ip_reputation_score":  ip_reputation_score,
+            "failed_logins":        failed_logins,
+            "browser_type":         ENCODERS["browser_type"][browser_type],
+            "unusual_time_access":  unusual_time_access,
         }
-        rf = RandomForestClassifier(random_state=42, n_jobs=1)
-        gs = GridSearchCV(rf, param_grid, cv=2, n_jobs=1,
-                          scoring="accuracy", verbose=0)
-        with st.spinner("Running Grid Search..."):
-            gs.fit(st.session_state.X_train, st.session_state.y_train)
-        st.session_state.grid_results = gs
-        st.success("✅ Grid Search complete.")
 
-    gs = st.session_state.grid_results
-    if gs is not None:
-        section("Best Configuration", "🏆")
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            kpi("Best CV Accuracy", f"{gs.best_score_*100:.2f}%", "good")
-        with c2:
-            st.markdown("**Best parameters**")
-            st.json(gs.best_params_)
+        pred, proba = predict_single(input_dict)
 
-        section("Full Results Table", "📋")
-        res_df = pd.DataFrame(gs.cv_results_)[
-            ["params", "mean_test_score", "std_test_score", "rank_test_score"]
-        ].sort_values("rank_test_score")
-        res_df["mean_test_score"] = (res_df["mean_test_score"] * 100).round(2)
-        res_df["std_test_score"]  = (res_df["std_test_score"] * 100).round(2)
-        st.dataframe(res_df, use_container_width=True)
+        section("Prediction Result", "🎯")
+        verdict_card(pred == 1, proba)
 
+        c1, c2, c3 = st.columns(3)
+        with c1: kpi("Prediction", "ATTACK" if pred == 1 else "BENIGN",
+                     "danger" if pred == 1 else "good")
+        with c2: kpi("Attack Probability", f"{proba:.2%}", "warn")
+        with c3: kpi("Confidence", f"{max(proba, 1-proba):.2%}", "accent")
 
-# ---------------- RANDOMIZED (RECALL) ----------------
-elif page == "🎲 Randomized Search (Recall)":
-    hero("🎲 Randomized Search — Optimized for Recall",
-         "Prioritize catching attacks, even at the cost of more false alarms.",
-         badge="Step 5b / 8")
+        # Probability gauge
+        section("Probability Breakdown", "📊")
+        fig, ax = plt.subplots(figsize=(8, 1.5))
+        ax.barh([""], [1 - proba], color="#10b981", edgecolor="white",
+                label="Benign", height=0.5)
+        ax.barh([""], [proba], left=[1 - proba], color="#ef4444",
+                edgecolor="white", label="Attack", height=0.5)
+        ax.set_xlim(0, 1)
+        ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+        ax.set_xticklabels(["0%", "25%", "50%", "75%", "100%"])
+        ax.set_yticks([])
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.4),
+                  ncol=2, frameon=False)
+        st.pyplot(fig)
 
-    if st.session_state.X_train is None:
-        st.warning("⚠️ Run Split & Scale first."); st.stop()
-
-    n_iter = st.slider("n_iter", 5, 20, 10, 5)
-
-    if st.button("▶️ Run Randomized Search (Recall)"):
-        param_dist = {
-            "max_features":      ["sqrt", "log2", None],
-            "max_depth":         [10, 20, 30, None],
-            "min_samples_split": randint(2, 15),
-            "min_samples_leaf":  randint(1, 8),
-            "bootstrap":         [True, False],
-            "class_weight":      [None, "balanced"],
-        }
-        rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
-        rs = RandomizedSearchCV(
-            rf, param_dist, n_iter=n_iter, cv=2, scoring="recall",
-            n_jobs=1, random_state=42, verbose=0, refit=True,
-        )
-        with st.spinner("Running Randomized Search (Recall)..."):
-            rs.fit(st.session_state.X_train, st.session_state.y_train)
-        st.session_state.rand_recall_results = rs
-        st.session_state.model_best = rs.best_estimator_
-        st.success("✅ Randomized Search (Recall) complete.")
-
-    rs = st.session_state.rand_recall_results
-    if rs is not None:
-        section("Best Configuration", "🏆")
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            kpi("Best CV Recall", f"{rs.best_score_*100:.2f}%", "good")
-        with c2:
-            st.json(rs.best_params_)
-
-        section("Test-Set Metrics", "📈")
-        metrics, y_pred, y_proba = evaluate_model(
-            rs.best_estimator_,
-            st.session_state.X_test,
-            st.session_state.y_test)
-        st.session_state.metrics = metrics
-        st.session_state.y_proba_best = y_proba
-        metric_row(metrics)
-
-        section("Confusion Matrix", "🔲")
-        st.pyplot(plot_confusion(st.session_state.y_test, y_pred,
-                                 "Confusion — Recall-optimized RF"))
+        # Input summary
+        with st.expander("📋 Submitted values"):
+            st.dataframe(pd.DataFrame([input_dict]).T.rename(
+                columns={0: "Value"}), use_container_width=True)
 
 
-# ---------------- RANDOMIZED (PR-AUC) ----------------
-elif page == "🎯 Randomized Search (PR-AUC)":
-    hero("🎯 Randomized Search — Optimized for PR-AUC",
-         "Maximize area under the Precision-Recall curve — best for imbalance.",
-         badge="Step 5c / 8")
-
-    if st.session_state.X_train is None:
-        st.warning("⚠️ Run Split & Scale first."); st.stop()
-
-    n_iter = st.slider("n_iter", 5, 20, 10, 5)
-
-    if st.button("▶️ Run Randomized Search (PR-AUC)"):
-        param_dist = {
-            "max_features":      ["sqrt", "log2"],
-            "max_depth":         [10, 20, 30, None],
-            "min_samples_split": randint(2, 15),
-            "min_samples_leaf":  randint(1, 8),
-            "bootstrap":         [True],
-            "class_weight":      [None, "balanced"],
-        }
-        rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
-        rs = RandomizedSearchCV(
-            rf, param_dist, n_iter=n_iter, cv=2,
-            scoring="average_precision",
-            n_jobs=1, random_state=42, verbose=0, refit=True,
-        )
-        with st.spinner("Running Randomized Search (PR-AUC)..."):
-            rs.fit(st.session_state.X_train, st.session_state.y_train)
-        st.session_state.rand_prauc_results = rs
-        st.session_state.model_best = rs.best_estimator_
-        st.success("✅ Randomized Search (PR-AUC) complete.")
-
-    rs = st.session_state.rand_prauc_results
-    if rs is not None:
-        section("Best Configuration", "🏆")
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            kpi("Best CV PR-AUC", f"{rs.best_score_*100:.2f}%", "good")
-        with c2:
-            st.json(rs.best_params_)
-
-        section("Test-Set Metrics (Default Threshold = 0.5)", "📈")
-        metrics, y_pred, y_proba = evaluate_model(
-            rs.best_estimator_,
-            st.session_state.X_test,
-            st.session_state.y_test)
-        st.session_state.metrics = metrics
-        st.session_state.y_proba_best = y_proba
-        metric_row(metrics)
-
-        section("Confusion Matrix", "🔲")
-        st.pyplot(plot_confusion(st.session_state.y_test, y_pred,
-                                 "Confusion — PR-AUC RF"))
-
-        section("Precision-Recall Curve", "📉")
-        st.pyplot(plot_pr_curve(
-            st.session_state.y_test, y_proba,
-            title="Precision-Recall — PR-AUC-optimized RF"))
-
-
-# ---------------- PRECISION-RECALL & THRESHOLD ----------------
-elif page == "📉 Precision-Recall & Threshold":
-    hero("📉 Precision-Recall & Threshold Tuning",
-         "Compare thresholds across every model you've trained — side by side.",
-         badge="Step 6 / 8")
-
-    available = {}
-    if st.session_state.model_baseline is not None:
-        available["🌲 Default Baseline"] = st.session_state.model_baseline
-    if st.session_state.model_balanced is not None:
-        available["⚖️ Balanced Baseline"] = st.session_state.model_balanced
-    if st.session_state.rand_recall_results is not None:
-        available["🎲 Recall-Optimized (Random Search)"] = (
-            st.session_state.rand_recall_results.best_estimator_)
-    if st.session_state.rand_prauc_results is not None:
-        available["🎯 PR-AUC-Optimized (Random Search)"] = (
-            st.session_state.rand_prauc_results.best_estimator_)
-
-    if not available:
-        st.warning(
-            "⚠️ No trained models found. Please train at least one model on "
-            "**Baseline Models**, **Randomized Search (Recall)**, or "
-            "**Randomized Search (PR-AUC)** first."
-        )
-        st.stop()
-
-    section("Which model do you want to tune?", "🎛️")
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        chosen_name = st.selectbox(
-            "Select a trained model:",
-            list(available.keys()),
-            index=len(available) - 1,
-            label_visibility="collapsed",
-        )
-    with c2:
-        st.caption(f"**{len(available)}** model(s) available")
-
-    model = available[chosen_name]
-    proba = model.predict_proba(st.session_state.X_test)[:, 1]
-    st.session_state.y_proba_best = proba
-
-    section("Baseline Metrics (Threshold = 0.50)", "📌")
-    m_default, y_pred_default, _ = evaluate_model(
-        model, st.session_state.X_test, st.session_state.y_test,
-        threshold=0.5)
-    metric_row(m_default)
-
-    section("Precision-Recall vs Threshold", "🎚️")
-    threshold = st.slider(
-        "Move the threshold to see the trade-off:",
-        min_value=0.0, max_value=1.0, value=0.23, step=0.01,
-        help="Lower threshold = higher recall (catch more attacks). "
-             "Higher threshold = higher precision (fewer false alarms).",
-    )
-
-    fig = plot_pr_curve(
-        st.session_state.y_test, proba,
-        threshold=threshold,
-        title=f"Precision-Recall Curve — {chosen_name} "
-              f"(Threshold = {threshold:.2f})",
-    )
-    st.pyplot(fig)
-
-    section(f"Metrics at Threshold = {threshold:.2f}", "📊")
-    m_tuned, y_pred_tuned, _ = evaluate_model(
-        model, st.session_state.X_test, st.session_state.y_test,
-        threshold=threshold)
-    metric_row(m_tuned)
-
-    section("Change vs. Default (0.50)", "📈")
-    deltas = {k: m_tuned[k] - m_default[k] for k in m_default}
-
-    def delta_card(label, value):
-        if abs(value) < 0.005:
-            color, arrow = "#64748b", "→"
-        elif value > 0:
-            color, arrow = "#10b981", "▲"
-        else:
-            color, arrow = "#ef4444", "▼"
-        html = dedent(f"""
-        <div class="kpi-card" style="text-align:left;">
-            <div class="kpi-label">{label}</div>
-            <div style="color:{color}; font-size:1.6rem; font-weight:700;
-                        font-variant-numeric: tabular-nums;">
-                {arrow} {value:+.2f}%
-            </div>
-        </div>
-        """).strip()
-        st.markdown(html, unsafe_allow_html=True)
-
-    d1, d2, d3, d4, d5 = st.columns(5)
-    with d1: delta_card("Accuracy",  deltas["Accuracy"])
-    with d2: delta_card("Precision", deltas["Precision"])
-    with d3: delta_card("Recall",    deltas["Recall"])
-    with d4: delta_card("F1 Score",  deltas["F1 Score"])
-    with d5: delta_card("PR-AUC",    deltas["PR-AUC"])
-
-    section("Confusion Matrix", "🔲")
-    st.pyplot(plot_confusion(
-        st.session_state.y_test, y_pred_tuned,
-        f"Confusion Matrix — {chosen_name} @ {threshold:.2f}"))
-
-    section("Classification Report", "📋")
-    st.dataframe(pd.DataFrame(classification_report(
-        st.session_state.y_test, y_pred_tuned, digits=4, output_dict=True
-    )).transpose(), use_container_width=True)
-
-    st.session_state.custom_threshold = threshold
-    st.session_state.chosen_model_name = chosen_name
-
-    section("All Models — Same Threshold", "🧮")
-    st.caption(
-        f"Comparing every trained model at the same "
-        f"**threshold = {threshold:.2f}**."
-    )
-
-    rows = []
-    for name, m in available.items():
-        mtr, _, _ = evaluate_model(
-            m, st.session_state.X_test, st.session_state.y_test,
-            threshold=threshold)
-        rows.append({
-            "Model":     name,
-            "Accuracy":  f"{mtr['Accuracy']:.2f}%",
-            "Precision": f"{mtr['Precision']:.2f}%",
-            "Recall":    f"{mtr['Recall']:.2f}%",
-            "F1 Score":  f"{mtr['F1 Score']:.2f}%",
-            "PR-AUC":    f"{mtr['PR-AUC']:.2f}%",
-        })
-
-    rows.sort(
-        key=lambda r: float(r["F1 Score"].rstrip("%")),
-        reverse=True,
-    )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+# ---------------- BATCH PREDICTION ----------------
+elif page == "📂 Batch Prediction (CSV)":
+    hero("📂 Batch Prediction",
+         "Upload a CSV with the same feature columns to score many sessions.",
+         badge="Bulk Inference")
 
     st.info(
-        "💡 **Rule of thumb** — for automated account lockouts you may "
-        "want precision ≥ 95% (threshold ~0.40–0.45). For SOC alerting, "
-        "prioritize recall ≥ 80% (threshold ~0.28–0.32)."
+        f"📌 Expected columns: **{', '.join(FEATURE_NAMES)}**  \n"
+        "Extra columns (like `session_id`) are ignored."
     )
 
-
-# ---------------- FEATURE IMPORTANCE ----------------
-elif page == "📊 Feature Importance":
-    hero("📊 Feature Importance",
-         "Which network features drive the model's attack predictions?",
-         badge="Step 7 / 8")
-
-    chosen_name = st.session_state.get("chosen_model_name")
-    model = None
-    if chosen_name == "🌲 Default Baseline":
-        model = st.session_state.model_baseline
-    elif chosen_name == "⚖️ Balanced Baseline":
-        model = st.session_state.model_balanced
-    elif chosen_name == "🎲 Recall-Optimized (Random Search)" and \
-            st.session_state.rand_recall_results is not None:
-        model = st.session_state.rand_recall_results.best_estimator_
-    elif chosen_name == "🎯 PR-AUC-Optimized (Random Search)" and \
-            st.session_state.rand_prauc_results is not None:
-        model = st.session_state.rand_prauc_results.best_estimator_
-
-    if model is None:
-        model = (st.session_state.model_best
-                 or st.session_state.model_balanced
-                 or st.session_state.model_baseline)
-
-    if model is None:
-        st.warning("⚠️ Train a model first."); st.stop()
-
-    if chosen_name:
-        st.caption(f"🧠 Showing importances for: **{chosen_name}**")
-
-    if not hasattr(model, "feature_importances_"):
-        st.error("Model has no feature_importances_."); st.stop()
-
-    imps = model.feature_importances_
-    names = st.session_state.feature_names or [f"f{i}" for i in range(len(imps))]
-    imp_df = (pd.DataFrame({"Feature": names, "Importance": imps})
-              .sort_values("Importance", ascending=False).reset_index(drop=True))
-
-    top_n = st.slider("Show top N features", 5, min(30, len(imp_df)),
-                      min(15, len(imp_df)))
-
-    section(f"Top {top_n} Feature Importances", "🏅")
-    fig, ax = plt.subplots(figsize=(10, max(4, top_n * 0.38)))
-    palette = sns.color_palette("Blues_r", top_n)
-    sns.barplot(data=imp_df.head(top_n), x="Importance", y="Feature",
-                ax=ax, palette=palette)
-    for i, v in enumerate(imp_df.head(top_n)["Importance"].values):
-        ax.text(v, i, f"  {v:.3f}", va="center", fontsize=9,
-                fontweight="bold", color="#334155")
-    ax.set_xlabel("Relative importance")
-    ax.set_title(f"Top {top_n} Feature Importances", pad=12)
-    st.pyplot(fig)
-
-    with st.expander("📄 Full ranked list"):
-        st.dataframe(imp_df, use_container_width=True)
-
-
-# ---------------- PREDICT ----------------
-elif page == "🔮 Predict":
-    hero("🔮 Predict on New Data",
-         "Score a CSV of network sessions against the trained model.",
-         badge="Step 8 / 8")
-
-    chosen_name = st.session_state.get("chosen_model_name")
-    chosen_model = None
-
-    if chosen_name == "🌲 Default Baseline":
-        chosen_model = st.session_state.model_baseline
-    elif chosen_name == "⚖️ Balanced Baseline":
-        chosen_model = st.session_state.model_balanced
-    elif chosen_name == "🎲 Recall-Optimized (Random Search)" and \
-            st.session_state.rand_recall_results is not None:
-        chosen_model = st.session_state.rand_recall_results.best_estimator_
-    elif chosen_name == "🎯 PR-AUC-Optimized (Random Search)" and \
-            st.session_state.rand_prauc_results is not None:
-        chosen_model = st.session_state.rand_prauc_results.best_estimator_
-
-    model = (chosen_model
-             or st.session_state.model_best
-             or st.session_state.model_balanced
-             or st.session_state.model_baseline)
-
-    if model is None:
-        st.warning("⚠️ Train a model first."); st.stop()
-
-    threshold = st.session_state.get("custom_threshold", 0.5)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if chosen_name:
-            st.caption(f"🧠 Using model: **{chosen_name}**")
-        else:
-            st.caption("🧠 Using fallback model (no selection on Threshold page).")
-    with c2:
-        st.caption(f"🎚️ Using threshold: **{threshold:.2f}**")
-
-    up = st.file_uploader("Upload feature CSV", type=["csv"])
+    up = st.file_uploader("Upload CSV", type=["csv"])
     if up is not None:
-        new_df = pd.read_csv(up)
+        raw = pd.read_csv(up)
 
-        if "session_id" in new_df.columns:
-            new_df = new_df.drop("session_id", axis=1)
-        if "encryption_used" in new_df.columns:
-            new_df["encryption_used"] = new_df["encryption_used"].fillna("None")
+        # Apply same cleaning as training
+        clean = raw.copy()
+        if "session_id" in clean.columns:
+            clean = clean.drop(columns=["session_id"])
+        if "encryption_used" in clean.columns:
+            clean["encryption_used"] = clean["encryption_used"].fillna("None")
 
-        le = LabelEncoder()
-        for c in ["protocol_type", "browser_type", "encryption_used"]:
-            if c in new_df.columns:
-                new_df[c] = le.fit_transform(new_df[c].astype(str))
+        # Encode categoricals using saved mappings
+        for col, mapping in ENCODERS.items():
+            if col in clean.columns:
+                clean[col] = clean[col].astype(str).map(mapping).fillna(-1).astype(int)
 
-        expected = st.session_state.feature_names
-        new_enc = pd.get_dummies(new_df).reindex(
-            columns=expected, fill_value=0)
+        # Predict
+        preds, probas = predict_batch(clean)
 
-        X_scaled = st.session_state.scaler.transform(new_enc)
-        probas = model.predict_proba(X_scaled)[:, 1]
-        preds = (probas >= threshold).astype(int)
-
-        out = new_df.copy()
+        out = raw.copy()
         out["attack_probability"] = probas.round(4)
         out["prediction"] = preds
 
         n_attacks = int((preds == 1).sum())
         n_safe = int((preds == 0).sum())
 
-        section("Prediction Summary", "📊")
-        c1, c2, c3 = st.columns(3)
+        section("Summary", "📊")
+        c1, c2, c3, c4 = st.columns(4)
         with c1: kpi("Sessions Scored", f"{len(out):,}", "accent")
         with c2: kpi("Attacks Detected", f"{n_attacks:,}", "danger")
         with c3: kpi("Benign Sessions", f"{n_safe:,}", "good")
+        with c4: kpi("Attack Rate",
+                     f"{n_attacks / len(out) * 100:.1f}%", "warn")
 
-        section("Sample Predictions", "👀")
+        section("Predictions Preview", "👀")
         st.dataframe(out.head(50), use_container_width=True)
 
         section("Prediction Distribution", "📈")
@@ -1247,16 +508,17 @@ elif page == "🔮 Predict":
         ax.bar(vc.index.astype(str), vc.values, color=colors,
                edgecolor="white", linewidth=1.5)
         for i, v in enumerate(vc.values):
-            ax.text(i, v, f"{v:,}", ha="center", va="bottom", fontweight="bold")
+            ax.text(i, v, f"{v:,}", ha="center", va="bottom",
+                    fontweight="bold")
         ax.set_xlabel("Prediction (0 = benign, 1 = attack)")
         ax.set_ylabel("Count")
         st.pyplot(fig)
 
-        section("Attack Probability Distribution", "🎯")
+        section("Probability Distribution", "🎯")
         fig, ax = plt.subplots(figsize=(9, 4))
-        ax.hist(probas, bins=40, color=ACCENT, edgecolor="white", alpha=0.85)
-        ax.axvline(threshold, color="#dc2626", ls="--", lw=2,
-                   label=f"Threshold = {threshold:.2f}")
+        ax.hist(probas, bins=40, color="#0ea5e9",
+                edgecolor="white", alpha=0.85)
+        ax.axvline(0.5, color="#dc2626", ls="--", lw=2, label="Threshold = 0.50")
         ax.set_xlabel("Predicted attack probability")
         ax.set_ylabel("Count")
         ax.legend()
@@ -1268,3 +530,58 @@ elif page == "🔮 Predict":
             file_name="predictions.csv",
             mime="text/csv",
         )
+
+
+# ---------------- MODEL INFORMATION ----------------
+elif page == "📊 Model Information":
+    hero("📊 Model Information",
+         "Inspect the loaded model's structure and feature importances.",
+         badge="Model Card")
+
+    section("Model Summary", "🧠")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: kpi("Algorithm", "Random Forest", "accent")
+    with c2: kpi("Trees", f"{MODEL.n_estimators}", "accent")
+    with c3: kpi("Max Depth", str(MODEL.max_depth), "accent")
+    with c4: kpi("Features", f"{len(FEATURE_NAMES)}", "good")
+
+    section("Hyperparameters", "⚙️")
+    params = {
+        "n_estimators":      MODEL.n_estimators,
+        "max_depth":         MODEL.max_depth,
+        "min_samples_split": MODEL.min_samples_split,
+        "min_samples_leaf":  MODEL.min_samples_leaf,
+        "max_features":      MODEL.max_features,
+        "class_weight":      MODEL.class_weight,
+        "random_state":      MODEL.random_state,
+        "criterion":         MODEL.criterion,
+    }
+    st.dataframe(pd.DataFrame([params]).T.rename(columns={0: "Value"}),
+                 use_container_width=True)
+
+    section("Feature Importances", "🏅")
+    imps = MODEL.feature_importances_
+    imp_df = (pd.DataFrame({"Feature": FEATURE_NAMES, "Importance": imps})
+              .sort_values("Importance", ascending=False).reset_index(drop=True))
+
+    top_n = st.slider("Top N features", 3, len(imp_df),
+                      min(15, len(imp_df)))
+
+    fig, ax = plt.subplots(figsize=(10, max(4, top_n * 0.4)))
+    palette = sns.color_palette("Blues_r", top_n)
+    sns.barplot(data=imp_df.head(top_n), x="Importance", y="Feature",
+                ax=ax, palette=palette)
+    for i, v in enumerate(imp_df.head(top_n)["Importance"].values):
+        ax.text(v, i, f"  {v:.3f}", va="center", fontsize=9,
+                fontweight="bold", color="#334155")
+    ax.set_xlabel("Relative importance")
+    st.pyplot(fig)
+
+    with st.expander("📄 Full feature list"):
+        st.dataframe(imp_df, use_container_width=True)
+
+    section("Encoder Mappings", "🔤")
+    for col, mapping in ENCODERS.items():
+        st.markdown(f"**{col}**")
+        st.dataframe(pd.DataFrame([mapping]).T.rename(
+            columns={0: "Encoded Value"}), use_container_width=True)

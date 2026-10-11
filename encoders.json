@@ -1,0 +1,19 @@
+{
+  "protocol_type": {
+    "ICMP": 0,
+    "TCP": 1,
+    "UDP": 2
+  },
+  "browser_type": {
+    "Chrome": 0,
+    "Edge": 1,
+    "Firefox": 2,
+    "Safari": 3,
+    "Unknown": 4
+  },
+  "encryption_used": {
+    "AES": 0,
+    "DES": 1,
+    "None": 2
+  }
+}
